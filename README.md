@@ -42,14 +42,12 @@ npm run android
 
 ## Backend 启动方式
 
-前置要求：Python 3.11+。
+前置要求：已安装 [uv](https://docs.astral.sh/uv/)，Python 3.11+ 由 uv 管理。
 
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv sync --all-groups
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
@@ -68,6 +66,5 @@ curl http://127.0.0.1:8000/health
 
 ```bash
 cd backend
-.venv\Scripts\activate
-pytest
+uv run pytest
 ```
