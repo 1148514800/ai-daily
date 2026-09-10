@@ -1,6 +1,5 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { DailyDigest, NewsCategory, NewsItem } from '../types';
-import { getDigestNews } from '../data/digests';
 import { formatLongDate } from '../lib/format';
 import { colors, spacing, typography } from '../theme';
 import { NewsCard } from './NewsCard';
@@ -20,8 +19,6 @@ type DigestViewProps = {
 };
 
 export function DigestView({ digest, onOpenNews, showFinishedHint = true }: DigestViewProps) {
-  const news = getDigestNews(digest);
-
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -29,11 +26,11 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
     >
       <Text style={styles.date}>{formatLongDate(digest.date)}</Text>
       <Text style={styles.title}>{digest.title}</Text>
+      <Text style={styles.count}>今日精选 {digest.news.length} 条 AI 动态</Text>
       <Text style={styles.description}>{digest.description}</Text>
-      <Text style={styles.highlight}>{digest.highlight}</Text>
 
       {SECTIONS.map((section) => {
-        const items = news.filter((item) => item.category === section.category);
+        const items = digest.news.filter((item) => item.category === section.category);
         if (items.length === 0) {
           return null;
         }
@@ -71,12 +68,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginTop: 8,
   },
-  description: {
+  count: {
     ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.sm,
   },
-  highlight: {
+  description: {
     ...typography.body,
     color: colors.text,
     marginTop: spacing.md,

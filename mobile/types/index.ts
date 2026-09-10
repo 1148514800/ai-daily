@@ -2,26 +2,28 @@ export type NewsCategory = 'highlight' | 'model' | 'opensource' | 'tool';
 
 export type NewsItem = {
   id: string;
-  title: string;
-  originalTitle: string;
+  title_cn: string;
+  title_original: string;
   summary: string;
+  why_it_matters: string;
   source: string;
-  publishedAt: string;
+  source_type: string;
+  published_at: string;
   category: NewsCategory;
-  whyItMatters: string;
   tags: string[];
   url: string;
 };
 
-export type GitHubRepo = {
+export type GitHubProject = {
   id: string;
+  repo: string;
   name: string;
   description: string;
-  stars: number;
-  starsDelta: number;
   language: string;
-  summaryZh: string;
-  whyWatch: string;
+  stars: number;
+  stars_delta: number;
+  summary_cn: string;
+  why_it_matters: string;
   url: string;
 };
 
@@ -29,12 +31,8 @@ export type DailyDigest = {
   date: string;
   title: string;
   description: string;
-  highlight: string;
-  newsIds: string[];
+  news: NewsItem[];
+  github_projects: GitHubProject[];
 };
-
-export type FavoriteItem =
-  | { id: string; kind: 'news'; newsId: string }
-  | { id: string; kind: 'github'; repoId: string };
 
 export type TabKey = 'today' | 'github' | 'favorites' | 'history';

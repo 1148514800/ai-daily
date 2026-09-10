@@ -1,10 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { GitHubRepo } from '../types';
+import type { GitHubProject } from '../types';
 import { formatStars, formatStarsDelta } from '../lib/format';
 import { colors, radius, spacing, typography } from '../theme';
 
 type GitHubCardProps = {
-  repo: GitHubRepo;
+  repo: GitHubProject;
   onPress?: (id: string) => void;
 };
 
@@ -12,7 +12,7 @@ export function GitHubCard({ repo, onPress }: GitHubCardProps) {
   const content = (
     <>
       <View style={styles.topRow}>
-        <Text style={styles.name}>{repo.name}</Text>
+        <Text style={styles.name}>{repo.repo}</Text>
       </View>
       <Text style={styles.description}>{repo.description}</Text>
       <View style={styles.statsRow}>
@@ -20,12 +20,12 @@ export function GitHubCard({ repo, onPress }: GitHubCardProps) {
         <Text style={styles.dot}>·</Text>
         <Text style={styles.stat}>{formatStars(repo.stars)} stars</Text>
         <Text style={styles.dot}>·</Text>
-        <Text style={styles.delta}>{formatStarsDelta(repo.starsDelta)}</Text>
+        <Text style={styles.delta}>{formatStarsDelta(repo.stars_delta)}</Text>
       </View>
-      <Text style={styles.summary}>{repo.summaryZh}</Text>
+      <Text style={styles.summary}>{repo.summary_cn}</Text>
       <View style={styles.whyBox}>
         <Text style={styles.whyLabel}>为什么值得关注</Text>
-        <Text style={styles.whyText}>{repo.whyWatch}</Text>
+        <Text style={styles.whyText}>{repo.why_it_matters}</Text>
       </View>
     </>
   );

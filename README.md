@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 1 - Android 静态 UI
+Phase 2 - Mock API 与 Mobile 联调
 
-Mobile 已用 mock 数据完成今日 / GitHub / 收藏 / 历史 / 新闻详情。后端仍是 FastAPI 健康检查骨架，尚未接入真实数据。
+Mobile 的今日、GitHub、新闻详情和历史日报从 FastAPI mock API 读取。收藏页仍使用本地静态数据。尚未接入真实新闻源、GitHub API 或 LLM。
 
 ## 目录结构
 
@@ -44,10 +44,19 @@ npm run android
 
 前置要求：已安装 [uv](https://docs.astral.sh/uv/)，Python 3.11+ 由 uv 管理。
 
+本机调试：
+
 ```bash
 cd backend
 uv sync --all-groups
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+给真机或模拟器访问时，需要监听所有网卡：
+
+```bash
+cd backend
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 健康检查：
@@ -62,9 +71,56 @@ curl http://127.0.0.1:8000/health
 {"status": "ok"}
 ```
 
+API 文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+主要接口：
+
+```text
+GET /health
+GET /api/v1/daily
+GET /api/v1/daily/{date}
+GET /api/v1/news/{news_id}
+GET /api/v1/github
+```
+
 运行后端测试：
 
 ```bash
 cd backend
 uv run pytest
 ```
+
+开发环境开启了宽松 CORS，仅用于本地联调，生产环境不要使用 `allow_origins=["*"]`。
+
+## Mobile 连接 Backend
+
+默认 API 地址：
+
+```text
+http://127.0.0.1:8000
+```
+
+Expo 通过环境变量读取：
+
+```text
+EXPO_PUBLIC_API_BASE_URL
+```
+
+复制 `mobile/.env.example` 为 `mobile/.env` 后按环境修改：
+
+```bash
+# 本机 / Expo web
+EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+
+# Android 模拟器
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8000
+
+# 真机：改成电脑的局域网 IP，不要把该 IP 提交进仓库
+EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:8000
+```
+
+修改 `.env` 后需要重启 Expo。

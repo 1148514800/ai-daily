@@ -16,6 +16,17 @@ export function formatShortDate(value: string): string {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
+export function formatTime(value: string): string {
+  const isoMatch = value.match(/T(\d{2}:\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
+  if (value.includes(' ')) {
+    return value.split(' ')[1]?.slice(0, 5) ?? value;
+  }
+  return value;
+}
+
 export function formatStars(value: number): string {
   if (value >= 1000) {
     const compact = value / 1000;

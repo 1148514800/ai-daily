@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NewsItem } from '../types';
+import { formatTime } from '../lib/format';
 import { colors, radius, spacing, typography } from '../theme';
 import { Chip } from './Chip';
 
@@ -26,9 +27,9 @@ export function NewsCard({ item, onPress }: NewsCardProps) {
         <Chip label={CATEGORY_LABEL[item.category]} tone={item.category === 'highlight' ? 'accent' : 'neutral'} />
         <Text style={styles.meta}>{item.source}</Text>
         <Text style={styles.dot}>·</Text>
-        <Text style={styles.meta}>{item.publishedAt.slice(11)}</Text>
+        <Text style={styles.meta}>{formatTime(item.published_at)}</Text>
       </View>
-      <Text style={styles.title}>{item.title}</Text>
+      <Text style={styles.title}>{item.title_cn}</Text>
       <Text style={styles.summary} numberOfLines={2}>
         {item.summary}
       </Text>

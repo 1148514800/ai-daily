@@ -1,23 +1,70 @@
-import type { FavoriteItem } from '../types';
-import { getNewsByIds } from './news';
-import { getReposByIds } from './github';
+import type { GitHubProject, NewsItem } from '../types';
 
-export const favoriteItems: FavoriteItem[] = [
-  { id: 'fav-news-1', kind: 'news', newsId: 'n-20260910-01' },
-  { id: 'fav-news-2', kind: 'news', newsId: 'n-20260910-08' },
-  { id: 'fav-news-3', kind: 'news', newsId: 'n-20260908-01' },
-  { id: 'fav-gh-1', kind: 'github', repoId: 'gh-llama-cpp' },
-  { id: 'fav-gh-2', kind: 'github', repoId: 'gh-vllm' },
+export const favoriteNews: NewsItem[] = [
+  {
+    id: 'n-20260910-01',
+    title_cn: '开源权重模型开始把“可复现评测”写成默认发布项',
+    title_original: 'Open model releases now ship reproducible eval suites by default',
+    summary: '多家实验室在发布说明里同时给出固定数据集、解码参数和复现脚本，减少榜单数字不可比的问题。',
+    why_it_matters: '评测口径统一后，日报读者能更快判断一次发布是真实进步，还是只换了测试方法。',
+    source: 'AI Daily Desk',
+    source_type: 'blog',
+    published_at: '2026-09-10T08:20:00+08:00',
+    category: 'highlight',
+    tags: ['评测', '开源模型', '可复现'],
+    url: 'https://example.com/news/reproducible-evals',
+  },
+  {
+    id: 'n-20260910-08',
+    title_cn: '一款极简阅读器把“AI 高亮”做成可选层',
+    title_original: 'A minimal reader treats AI highlights as an optional layer',
+    summary: '默认仍是原文优先，摘要、术语解释和高亮都可以一键关闭，避免阅读被模型打断。',
+    why_it_matters: '这提醒内容产品：AI 应该让阅读更快，而不是把页面变得更吵。',
+    source: 'App Notes',
+    source_type: 'blog',
+    published_at: '2026-09-10T16:25:00+08:00',
+    category: 'tool',
+    tags: ['阅读器', '产品设计', '摘要'],
+    url: 'https://example.com/news/optional-ai-highlights',
+  },
+  {
+    id: 'n-20260908-01',
+    title_cn: '检索增强开始把“引用页码”当作最低要求',
+    title_original: 'RAG systems start treating page-level citations as a baseline',
+    summary: '只给链接已经不够，新的开源模板会标出段落位置，减少摘要看起来很真、出处对不上的情况。',
+    why_it_matters: '资讯产品如果不能追溯到段落，用户就无法信任“今日重点”里的判断。',
+    source: 'Search x LLM',
+    source_type: 'paper',
+    published_at: '2026-09-08T10:05:00+08:00',
+    category: 'highlight',
+    tags: ['RAG', '引用', '可信度'],
+    url: 'https://example.com/news/page-citations',
+  },
 ];
 
-export function getFavoriteNews() {
-  return getNewsByIds(
-    favoriteItems.filter((item) => item.kind === 'news').map((item) => item.newsId),
-  );
-}
-
-export function getFavoriteRepos() {
-  return getReposByIds(
-    favoriteItems.filter((item) => item.kind === 'github').map((item) => item.repoId),
-  );
-}
+export const favoriteRepos: GitHubProject[] = [
+  {
+    id: 'gh-llama-cpp',
+    repo: 'ggml-org/llama.cpp',
+    name: 'llama.cpp',
+    description: 'LLM inference in C/C++',
+    language: 'C++',
+    stars: 87240,
+    stars_delta: 312,
+    summary_cn: '在本地和手机上运行大模型的事实标准之一，最近的更新更关注移动端调度和内存稳定性。',
+    why_it_matters: '如果你关心端侧摘要、离线阅读或把模型塞进 Android，这个仓库仍然是最先看的地方。',
+    url: 'https://github.com/ggml-org/llama.cpp',
+  },
+  {
+    id: 'gh-vllm',
+    repo: 'vllm-project/vllm',
+    name: 'vllm',
+    description: 'A high-throughput and memory-efficient inference engine for LLMs',
+    language: 'Python',
+    stars: 58410,
+    stars_delta: 428,
+    summary_cn: '服务端推理的主流引擎。前缀缓存和批量解码的改进，对每天固定模板的新闻摘要很有用。',
+    why_it_matters: '做日报后端时，它决定的是吞吐和成本，而不是模型本身聪不聪明。',
+    url: 'https://github.com/vllm-project/vllm',
+  },
+];

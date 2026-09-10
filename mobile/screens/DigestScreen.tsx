@@ -1,10 +1,10 @@
-import { Text, View } from 'react-native';
 import { BackHeader } from '../components/BackHeader';
 import { DigestView } from '../components/DigestView';
 import { Screen } from '../components/Screen';
-import { getDigestByDate } from '../data/digests';
+import { StatusState } from '../components/StatusState';
+import { useAsyncResource } from '../hooks/useAsyncResource';
 import { formatShortDate } from '../lib/format';
-import { colors, spacing, typography } from '../theme';
+import { fetchDailyByDate } from '../services/api';
 
 type DigestScreenProps = {
   date: string;
@@ -13,23 +13,25 @@ type DigestScreenProps = {
 };
 
 export function DigestScreen({ date, onBack, onOpenNews }: DigestScreenProps) {
-  const digest = getDigestByDate(date);
-
-  if (!digest) {
-    return (
-      <Screen>
-        <BackHeader title="日报" onBack={onBack} />
-        <View style={{ paddingHorizontal: spacing.lg }}>
-          <Text style={{ ...typography.body, color: colors.textSecondary }}>没有找到这一天的日报。</Text>
-        </View>
-      </Screen>
-    );
-  }
+  const { status, data, error, reload } = useAsyncResource(
+    () => fetchDailyByDate(date),
+    [date],
+  );
+  const notFound = status === 'error' && error?.status === 404;
 
   return (
     <Screen>
-      <BackHeader title={formatShortDate(digest.date)} onBack={onBack} />
-      <DigestView digest={digest} onOpenNews={onOpenNews} showFinishedHint={false} />
+      <BackHeader title={formatShortDate(date)} onBack={onBack} />
+      <StatusState
+        loading={status === 'loading'}
+        error={status === 'error' && !notFound}
+        empty={notFound || (status === 'success' && !!data && data.news.length === 0)}
+        loadingText="正在加载日报..."
+        emptyText="没有找到这一天的日报。"
+        onRetry={notFound ? undefined : reload}
+      >
+        {data ? <DigestView digest={data} onOpenNews={onOpenNews} showFinishedHint={false} /> : null}
+      </StatusState>
     </Screen>
   );
 }

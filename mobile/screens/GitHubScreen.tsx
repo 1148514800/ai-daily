@@ -1,20 +1,35 @@
 import { ScrollView, StyleSheet, Text } from 'react-native';
 import { GitHubCard } from '../components/GitHubCard';
 import { Screen } from '../components/Screen';
-import { githubRepos } from '../data/github';
+import { StatusState } from '../components/StatusState';
+import { useAsyncResource } from '../hooks/useAsyncResource';
+import { fetchGithubProjects } from '../services/api';
 import { colors, spacing, typography } from '../theme';
 
 export function GitHubScreen() {
+  const { status, data, reload } = useAsyncResource(fetchGithubProjects);
+
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.kicker}>今日热门</Text>
-        <Text style={styles.title}>GitHub</Text>
-        <Text style={styles.description}>这些项目值得放进本周的观察名单，数据为本地 mock。</Text>
-        {githubRepos.map((repo) => (
-          <GitHubCard key={repo.id} repo={repo} />
-        ))}
-      </ScrollView>
+      <StatusState
+        loading={status === 'loading'}
+        error={status === 'error'}
+        empty={status === 'success' && !!data && data.length === 0}
+        loadingText="正在加载 GitHub 项目..."
+        emptyText="暂时没有 GitHub 项目"
+        onRetry={reload}
+      >
+        {data ? (
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Text style={styles.kicker}>今日热门</Text>
+            <Text style={styles.title}>GitHub</Text>
+            <Text style={styles.description}>这些项目值得放进本周的观察名单。</Text>
+            {data.map((repo) => (
+              <GitHubCard key={repo.id} repo={repo} />
+            ))}
+          </ScrollView>
+        ) : null}
+      </StatusState>
     </Screen>
   );
 }

@@ -2,7 +2,10 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 import { BackHeader } from '../components/BackHeader';
 import { Chip } from '../components/Chip';
 import { Screen } from '../components/Screen';
-import { getNewsById } from '../data/news';
+import { StatusState } from '../components/StatusState';
+import { useAsyncResource } from '../hooks/useAsyncResource';
+import { formatTime } from '../lib/format';
+import { fetchNews } from '../services/api';
 import { colors, radius, spacing, typography } from '../theme';
 
 type NewsDetailScreenProps = {
@@ -11,25 +14,15 @@ type NewsDetailScreenProps = {
 };
 
 export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
-  const item = getNewsById(newsId);
-
-  if (!item) {
-    return (
-      <Screen>
-        <BackHeader title="详情" onBack={onBack} />
-        <View style={styles.missing}>
-          <Text style={styles.missingText}>没有找到这条内容。</Text>
-        </View>
-      </Screen>
-    );
-  }
+  const { status, data, error, reload } = useAsyncResource(() => fetchNews(newsId), [newsId]);
+  const notFound = status === 'error' && error?.status === 404;
 
   async function openOriginal() {
-    if (!item) {
+    if (!data) {
       return;
     }
     try {
-      await Linking.openURL(item.url);
+      await Linking.openURL(data.url);
     } catch {
       Alert.alert('查看原文', '这是占位链接，本阶段不访问真实页面。');
     }
@@ -38,35 +31,46 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
   return (
     <Screen>
       <BackHeader title="新闻详情" onBack={onBack} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.original}>{item.originalTitle}</Text>
-        <Text style={styles.meta}>
-          {item.source}  ·  {item.publishedAt}
-        </Text>
+      <StatusState
+        loading={status === 'loading'}
+        error={status === 'error' && !notFound}
+        empty={notFound}
+        loadingText="正在加载新闻详情..."
+        emptyText="没有找到这条内容。"
+        onRetry={notFound ? undefined : reload}
+      >
+        {data ? (
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Text style={styles.title}>{data.title_cn}</Text>
+            <Text style={styles.original}>{data.title_original}</Text>
+            <Text style={styles.meta}>
+              {data.source}  ·  {data.published_at.slice(0, 10)} {formatTime(data.published_at)}
+            </Text>
 
-        <Text style={styles.sectionLabel}>中文摘要</Text>
-        <Text style={styles.body}>{item.summary}</Text>
+            <Text style={styles.sectionLabel}>中文摘要</Text>
+            <Text style={styles.body}>{data.summary}</Text>
 
-        <View style={styles.whyBox}>
-          <Text style={styles.sectionLabel}>Why it matters</Text>
-          <Text style={styles.body}>{item.whyItMatters}</Text>
-        </View>
+            <View style={styles.whyBox}>
+              <Text style={styles.sectionLabel}>Why it matters</Text>
+              <Text style={styles.body}>{data.why_it_matters}</Text>
+            </View>
 
-        <View style={styles.tags}>
-          {item.tags.map((tag) => (
-            <Chip key={tag} label={tag} />
-          ))}
-        </View>
+            <View style={styles.tags}>
+              {data.tags.map((tag) => (
+                <Chip key={tag} label={tag} />
+              ))}
+            </View>
 
-        <Pressable
-          onPress={openOriginal}
-          android_ripple={{ color: colors.overlay }}
-          style={({ pressed }) => [styles.button, pressed && styles.pressed]}
-        >
-          <Text style={styles.buttonText}>查看原文</Text>
-        </Pressable>
-      </ScrollView>
+            <Pressable
+              onPress={openOriginal}
+              android_ripple={{ color: colors.overlay }}
+              style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+            >
+              <Text style={styles.buttonText}>查看原文</Text>
+            </Pressable>
+          </ScrollView>
+        ) : null}
+      </StatusState>
     </Screen>
   );
 }
@@ -128,12 +132,5 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
     fontWeight: '600',
-  },
-  missing: {
-    padding: spacing.lg,
-  },
-  missingText: {
-    ...typography.body,
-    color: colors.textSecondary,
   },
 });
