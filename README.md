@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 0 - 项目初始化和工程骨架
+Phase 1 - Android 静态 UI
 
-当前只包含 Mobile 和 Backend 的最小可运行骨架，不包含新闻采集、摘要、数据库业务或完整 UI。
+Mobile 已用 mock 数据完成今日 / GitHub / 收藏 / 历史 / 新闻详情。后端仍是 FastAPI 健康检查骨架，尚未接入真实数据。
 
 ## 目录结构
 

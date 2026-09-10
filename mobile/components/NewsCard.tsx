@@ -1,0 +1,76 @@
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import type { NewsItem } from '../types';
+import { colors, radius, spacing, typography } from '../theme';
+import { Chip } from './Chip';
+
+const CATEGORY_LABEL: Record<NewsItem['category'], string> = {
+  highlight: '今日重点',
+  model: 'AI / 模型',
+  opensource: '开源项目',
+  tool: 'AI 工具',
+};
+
+type NewsCardProps = {
+  item: NewsItem;
+  onPress: (id: string) => void;
+};
+
+export function NewsCard({ item, onPress }: NewsCardProps) {
+  return (
+    <Pressable
+      onPress={() => onPress(item.id)}
+      android_ripple={{ color: colors.overlay }}
+      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+    >
+      <View style={styles.metaRow}>
+        <Chip label={CATEGORY_LABEL[item.category]} tone={item.category === 'highlight' ? 'accent' : 'neutral'} />
+        <Text style={styles.meta}>{item.source}</Text>
+        <Text style={styles.dot}>·</Text>
+        <Text style={styles.meta}>{item.publishedAt.slice(11)}</Text>
+      </View>
+      <Text style={styles.title}>{item.title}</Text>
+      <Text style={styles.summary} numberOfLines={2}>
+        {item.summary}
+      </Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.sm,
+  },
+  pressed: {
+    opacity: 0.92,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: spacing.sm,
+  },
+  title: {
+    ...typography.subtitle,
+    color: colors.text,
+    marginBottom: 8,
+  },
+  summary: {
+    ...typography.body,
+    fontSize: 15,
+    lineHeight: 24,
+    color: colors.textSecondary,
+  },
+  meta: {
+    ...typography.meta,
+    color: colors.textTertiary,
+  },
+  dot: {
+    color: colors.textTertiary,
+  },
+});
