@@ -14,10 +14,10 @@ def test_get_today_daily(client) -> None:
     assert payload["date"] == "2026-09-10"
     assert payload["title"]
     assert payload["description"]
-    assert len(payload["news"]) == 3
+    sources = {item["source"] for item in payload["news"]}
+    assert sources == {"OpenAI", "Google DeepMind", "Hugging Face"}
+    assert len(payload["news"]) == 6
     first = payload["news"][0]
-    assert first["source"] == "OpenAI"
-    assert first["source_type"] == "official"
     assert first["why_it_matters"] == ""
     assert first["title_cn"] == first["title_original"]
 
@@ -35,6 +35,7 @@ def test_get_news(client) -> None:
     payload = response.json()
     assert payload["id"] == news_id
     assert payload["url"] == "https://openai.com/index/gpt-6-astra"
+    assert payload["source"] == "OpenAI"
 
 
 def test_list_github(client) -> None:
@@ -66,12 +67,16 @@ def test_daily_ok_when_refresh_fails(monkeypatch) -> None:
 
     from fastapi.testclient import TestClient
 
-    from app.collectors.openai import CollectResult
+    from app.collectors.rss import CollectResult
     from app.main import app
 
     monkeypatch.setattr(
-        "app.services.digest_store.collect_openai_news",
-        lambda **kwargs: CollectResult(error="offline"),
+        "app.services.digest_store.collect_all_sources",
+        lambda **kwargs: [
+            CollectResult(source_id="openai", source_name="OpenAI", success=False, error="offline"),
+            CollectResult(source_id="deepmind", source_name="Google DeepMind", success=False, error="offline"),
+            CollectResult(source_id="huggingface", source_name="Hugging Face", success=False, error="offline"),
+        ],
     )
     monkeypatch.setattr(
         "app.services.digest_store.now_utc",

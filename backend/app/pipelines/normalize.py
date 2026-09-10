@@ -3,14 +3,13 @@ from datetime import timezone
 
 from app.collectors.raw import RawArticle
 from app.models import NewsCategory, NewsItem
-
-SOURCE_NAME = "OpenAI"
-SOURCE_TYPE = "official"
+from app.pipelines.urls import canonicalize_url
 
 
 def stable_news_id(url: str) -> str:
-    digest = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
-    return f"openai-{digest}"
+    canonical = canonicalize_url(url)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    return f"rss-{digest}"
 
 
 def news_item_from_raw(raw: RawArticle) -> NewsItem:
@@ -20,15 +19,15 @@ def news_item_from_raw(raw: RawArticle) -> NewsItem:
     published_at = published.isoformat() if published is not None else ""
 
     return NewsItem(
-        id=stable_news_id(raw.url),
+        id=stable_news_id(raw.canonical_url or raw.url),
         title_cn=raw.title,
         title_original=raw.title,
         summary=raw.summary,
         why_it_matters="",
-        source=SOURCE_NAME,
-        source_type=SOURCE_TYPE,
+        source=raw.source,
+        source_type=raw.source_type,
         published_at=published_at,
         category=NewsCategory.highlight,
-        tags=["OpenAI"],
+        tags=[raw.source],
         url=raw.url,
     )

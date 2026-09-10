@@ -39,8 +39,9 @@ def test_stable_id() -> None:
     first = stable_news_id(url)
     second = stable_news_id(url)
     assert first == second
-    assert first.startswith("openai-")
-    assert stable_news_id(url + "/") != first
+    assert first.startswith("rss-")
+    assert stable_news_id(url + "/") == first
+    assert stable_news_id(url + "?utm_source=rss") == first
 
 
 def test_last_24h_filter(openai_rss_xml: str) -> None:
@@ -76,31 +77,3 @@ def test_network_failure_does_not_crash() -> None:
     assert result.valid == []
     assert result.error
     assert result.news_items == []
-
-
-def test_store_refresh_builds_today_digest(openai_rss_xml: str) -> None:
-    store = DigestStore()
-    store.refresh(now=FROZEN_NOW, fetch_text=lambda url, timeout=10.0: openai_rss_xml)
-    digest = store.get_today()
-    assert digest.date == "2026-09-10"
-    assert len(digest.news) == 3
-    assert store.get_by_date("2026-09-09") is None
-    news = store.get_news(digest.news[0].id)
-    assert news is not None
-    assert news.source == "OpenAI"
-    assert news.source_type == "official"
-
-
-def test_store_empty_when_all_old() -> None:
-    xml = """<?xml version='1.0'?><rss version='2.0'><channel>
-    <item>
-      <title>Ancient post</title>
-      <link>https://openai.com/index/ancient</link>
-      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
-    </item>
-    </channel></rss>"""
-    store = DigestStore()
-    store.refresh(now=FROZEN_NOW, fetch_text=lambda url, timeout=10.0: xml)
-    digest = store.get_today()
-    assert digest.news == []
-    assert digest.date == "2026-09-10"

@@ -1,7 +1,12 @@
+import logging
 from datetime import datetime, timezone
 
-from app.collectors.openai import collect_openai_news, within_last_hours
+from app.collectors.rss import CollectResult, article_within_last_hours, collect_all_sources
 from app.models import DailyDigest, NewsItem
+from app.pipelines.dedup import dedupe_articles
+from app.pipelines.normalize import news_item_from_raw
+
+logger = logging.getLogger(__name__)
 
 
 def now_utc() -> datetime:
@@ -12,7 +17,7 @@ def empty_digest(date: str) -> DailyDigest:
     return DailyDigest(
         date=date,
         title="今日 AI 日报",
-        description="今天还没有新的 OpenAI 资讯。",
+        description="今天还没有新的 AI 资讯。",
         news=[],
         github_projects=[],
     )
@@ -23,32 +28,54 @@ class DigestStore:
         self.digest: DailyDigest | None = None
         self.news_by_id: dict[str, NewsItem] = {}
         self.last_error: str | None = None
+        self.last_reports: list[CollectResult] = []
+        self.last_recent_count: int = 0
 
-    def refresh(self, now: datetime | None = None, fetch_text=None) -> None:
+    def refresh(self, now: datetime | None = None, fetch_text=None) -> list[CollectResult]:
         current = now or now_utc()
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         date = current.date().isoformat()
 
-        result = collect_openai_news(fetch_text=fetch_text)
-        self.last_error = result.error
+        reports = collect_all_sources(fetch_text=fetch_text)
+        self.last_reports = reports
+        errors = [report.error for report in reports if report.error]
+        self.last_error = "; ".join(errors) if errors else None
+        for report in reports:
+            logger.info(
+                "source=%s success=%s fetched=%s valid=%s skipped=%s error=%s",
+                report.source_id,
+                report.success,
+                report.fetched,
+                len(report.valid),
+                report.skipped,
+                report.error,
+            )
 
-        recent = [item for item in result.news_items if within_last_hours(item, current)]
-        recent.sort(key=lambda item: item.published_at, reverse=True)
+        merged = []
+        for report in reports:
+            merged.extend(report.valid)
 
-        if recent:
-            description = f"来自 OpenAI News 的 {len(recent)} 条更新。"
+        recent = [article for article in merged if article_within_last_hours(article, current)]
+        self.last_recent_count = len(recent)
+        deduped = dedupe_articles(recent)
+        news_items = [news_item_from_raw(article) for article in deduped]
+
+        sources = sorted({item.source for item in news_items})
+        if news_items:
+            description = f"来自 { '、'.join(sources) } 的 {len(news_items)} 条更新。"
         else:
-            description = "今天还没有新的 OpenAI 资讯。"
+            description = "今天还没有新的 AI 资讯。"
 
-        self.news_by_id = {item.id: item for item in result.news_items}
+        self.news_by_id = {item.id: item for item in news_items}
         self.digest = DailyDigest(
             date=date,
             title="今日 AI 日报",
             description=description,
-            news=recent,
+            news=news_items,
             github_projects=[],
         )
+        return reports
 
     def get_today(self) -> DailyDigest:
         if self.digest is None:

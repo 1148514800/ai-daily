@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 3 - OpenAI News RSS
+Phase 4 - 多 RSS 来源与规则去重
 
-今日日报来自 OpenAI 官方 RSS。GitHub 页面仍为 mock。尚未实现中文 AI 摘要、数据库或定时任务。
+今日日报来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS。GitHub 页面仍为 mock。当前只做规则去重，尚未实现语义级事件聚类、中文翻译、AI 摘要、数据库或定时任务。
 
 ## 目录结构
 
@@ -100,29 +100,40 @@ uv run pytest
 ## 当前真实来源
 
 - OpenAI News RSS：`https://openai.com/news/rss.xml`
-- 只解析 RSS，不爬 OpenAI HTML 页面
+- Google DeepMind Blog RSS：`https://deepmind.google/blog/rss.xml`
+- Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
+- 只解析标准 RSS/Atom，不爬 HTML 页面
 - 最近 24 小时内的文章进入今日日报
+- 来源失败互相隔离：单个源超时或解析失败时，其余源仍会生成日报
+- 当前只做保守规则去重（canonical URL、48 小时内完全相同标题），没有语义级事件聚类
 - 当前直接使用 RSS 原标题和原摘要，没有中文翻译或 AI 摘要
 - GitHub 页面仍返回 Phase 2 mock 数据
 
-手动测试 collector：
+手动测试单个 OpenAI collector：
 
 ```bash
 cd backend
 uv run python -m app.collectors.openai
 ```
 
-会打印：
+手动测试全部来源：
 
-```text
-Fetched: X
-Valid: X
-Skipped: X
-Last 24h: X
-published_at | title
+```bash
+cd backend
+uv run python -m app.collectors.refresh
 ```
 
-应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都访问 OpenAI。
+会打印每个来源的抓取数量，以及：
+
+```text
+Total:
+Fetched: X
+Valid: X
+Last 24h: X
+After dedup: X
+```
+
+应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都重新访问 RSS。
 
 ## Mobile 连接 Backend
 

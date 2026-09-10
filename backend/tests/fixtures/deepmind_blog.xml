@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Google DeepMind Blog</title>
+    <link>https://deepmind.google/blog</link>
+    <item>
+      <title>Scaling world models</title>
+      <link>https://deepmind.google/blog/scaling-world-models/</link>
+      <pubDate>Wed, 10 Sep 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>GPT-6 Astra: The next generation in intelligence for work</title>
+      <description>A DeepMind recap of the same announcement.</description>
+      <link>https://deepmind.google/blog/gpt-6-astra-recap</link>
+      <pubDate>Wed, 10 Sep 2026 13:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Old DeepMind paper</title>
+      <description>Should be filtered by the 24h window.</description>
+      <link>https://deepmind.google/blog/old-paper</link>
+      <pubDate>Mon, 01 Sep 2026 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

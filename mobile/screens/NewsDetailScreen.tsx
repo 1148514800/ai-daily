@@ -48,7 +48,7 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
             </Text>
 
             <Text style={styles.sectionLabel}>中文摘要</Text>
-            <Text style={styles.body}>{data.summary}</Text>
+            <Text style={styles.body}>{data.summary || "原文暂无摘要。"}</Text>
 
             {data.why_it_matters ? (
               <View style={styles.whyBox}>
