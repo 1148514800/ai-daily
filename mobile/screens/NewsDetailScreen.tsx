@@ -50,16 +50,20 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
             <Text style={styles.sectionLabel}>中文摘要</Text>
             <Text style={styles.body}>{data.summary}</Text>
 
-            <View style={styles.whyBox}>
-              <Text style={styles.sectionLabel}>Why it matters</Text>
-              <Text style={styles.body}>{data.why_it_matters}</Text>
-            </View>
+            {data.why_it_matters ? (
+              <View style={styles.whyBox}>
+                <Text style={styles.sectionLabel}>Why it matters</Text>
+                <Text style={styles.body}>{data.why_it_matters}</Text>
+              </View>
+            ) : null}
 
-            <View style={styles.tags}>
-              {data.tags.map((tag) => (
-                <Chip key={tag} label={tag} />
-              ))}
-            </View>
+            {data.tags.length ? (
+              <View style={styles.tags}>
+                {data.tags.map((tag) => (
+                  <Chip key={tag} label={tag} />
+                ))}
+              </View>
+            ) : null}
 
             <Pressable
               onPress={openOriginal}

@@ -1,24 +1,20 @@
 from fastapi import APIRouter, HTTPException
 
-from app.data.digests import DIGESTS_BY_DATE, TODAY_DATE
 from app.data.github import GITHUB_PROJECTS
-from app.data.news import NEWS_BY_ID
 from app.models import DailyDigest, GitHubProject, NewsItem
+from app.services.digest_store import store
 
 router = APIRouter()
 
 
 @router.get("/daily", response_model=DailyDigest)
 def get_today_daily() -> DailyDigest:
-    digest = DIGESTS_BY_DATE.get(TODAY_DATE)
-    if digest is None:
-        raise HTTPException(status_code=404, detail="Daily digest not found")
-    return digest
+    return store.get_today()
 
 
 @router.get("/daily/{date}", response_model=DailyDigest)
 def get_daily_by_date(date: str) -> DailyDigest:
-    digest = DIGESTS_BY_DATE.get(date)
+    digest = store.get_by_date(date)
     if digest is None:
         raise HTTPException(status_code=404, detail="Daily digest not found")
     return digest
@@ -26,7 +22,7 @@ def get_daily_by_date(date: str) -> DailyDigest:
 
 @router.get("/news/{news_id}", response_model=NewsItem)
 def get_news(news_id: str) -> NewsItem:
-    item = NEWS_BY_ID.get(news_id)
+    item = store.get_news(news_id)
     if item is None:
         raise HTTPException(status_code=404, detail="News item not found")
     return item

@@ -1,28 +1,28 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 2
+Current Phase: Phase 3
 
 Completed:
 - 项目初始化
 - Mobile 工程骨架
 - Backend 工程骨架
-- 基础开发文档
-- Backend 改为 uv 管理 Python 环境和依赖
 - Android 静态 UI
-- FastAPI mock API：今日日报、历史日报、新闻详情、GitHub 列表
-- Mobile 通过统一 API client 读取后端 mock 数据
+- FastAPI mock API 与 Mobile 联调
+- OpenAI News RSS collector
+- 最近 24 小时日报写入内存后通过 /api/v1/daily 提供
 
 Current Architecture:
 - Expo + React Native + TypeScript
-- FastAPI mock API under /api/v1
+- FastAPI /api/v1
+- OpenAI RSS -> Collector -> NewsItem -> in-memory DailyDigest
+- GitHub 页面仍为 mock
 - uv + CPython 3.11
-- SQLite planned
-- Favorites still use local static mock
 
 Next:
-Phase 3 - 接入真实信息源或把 mock 日报生成流程产品化
+Phase 4 - 增加更多真实来源，或接入 GitHub Trending
 
 Known Issues:
-- 收藏状态未持久化
-- 查看原文使用 mock URL
+- 无中文翻译 / AI 摘要
+- 收藏未持久化
+- 无定时刷新，仅启动时抓取一次
 - 开发环境 CORS 允许所有来源，仅限 development

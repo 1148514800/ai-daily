@@ -29,7 +29,7 @@ export function NewsCard({ item, onPress }: NewsCardProps) {
         <Text style={styles.dot}>·</Text>
         <Text style={styles.meta}>{formatTime(item.published_at)}</Text>
       </View>
-      <Text style={styles.title}>{item.title_cn}</Text>
+      <Text style={styles.title} numberOfLines={3}>{item.title_cn}</Text>
       <Text style={styles.summary} numberOfLines={2}>
         {item.summary}
       </Text>

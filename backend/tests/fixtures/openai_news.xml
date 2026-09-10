@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>OpenAI News</title>
+    <link>https://openai.com/news</link>
+    <description>The OpenAI blog</description>
+    <item>
+      <title>GPT-6 Astra: The next generation in intelligence for work</title>
+      <description>A shorter official summary about the new model release.</description>
+      <link>https://openai.com/index/gpt-6-astra</link>
+      <guid isPermaLink="true">https://openai.com/index/gpt-6-astra</guid>
+      <pubDate>Wed, 10 Sep 2026 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>The AI policy window is open. We need to act.</title>
+      <description>Chris Lehane argues that stronger AI capabilities require stronger safety evidence.</description>
+      <link>https://openai.com/index/ai-policy-window</link>
+      <guid isPermaLink="true">https://openai.com/index/ai-policy-window</guid>
+      <pubDate>Wed, 09 Sep 2026 21:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Old research recap</title>
+      <description>This item is older than 24 hours and should be filtered out of today.</description>
+      <link>https://openai.com/index/old-research-recap</link>
+      <guid isPermaLink="true">https://openai.com/index/old-research-recap</guid>
+      <pubDate>Mon, 08 Sep 2026 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>OpenAI Codex update without a summary</title>
+      <link>https://openai.com/index/codex-update</link>
+      <guid isPermaLink="true">https://openai.com/index/codex-update</guid>
+      <pubDate>Wed, 10 Sep 2026 15:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <description>Missing title should be skipped.</description>
+      <link>https://openai.com/index/missing-title</link>
+      <pubDate>Wed, 10 Sep 2026 16:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Missing link should be skipped</title>
+      <description>No URL here.</description>
+      <pubDate>Wed, 10 Sep 2026 16:05:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Broken date should be skipped</title>
+      <description>Bad pubDate.</description>
+      <link>https://openai.com/index/broken-date</link>
+      <pubDate>not-a-date</pubDate>
+    </item>
+  </channel>
+</rss>

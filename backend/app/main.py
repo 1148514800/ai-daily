@@ -1,13 +1,22 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
+from app.services.digest_store import store
 
 APP_ENV = os.getenv("APP_ENV", "development")
 
-app = FastAPI(title="AI Daily API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    store.refresh()
+    yield
+
+
+app = FastAPI(title="AI Daily API", version="0.1.0", lifespan=lifespan)
 
 # Development-only CORS. Do not use wildcard origins in production.
 if APP_ENV == "development":

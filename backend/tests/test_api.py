@@ -1,48 +1,43 @@
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
+from app.pipelines.normalize import stable_news_id
 
 
-def test_health() -> None:
+def test_health(client) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_get_today_daily() -> None:
+def test_get_today_daily(client) -> None:
     response = client.get("/api/v1/daily")
     assert response.status_code == 200
     payload = response.json()
     assert payload["date"] == "2026-09-10"
     assert payload["title"]
     assert payload["description"]
-    assert len(payload["news"]) == 10
-    assert len(payload["github_projects"]) >= 1
+    assert len(payload["news"]) == 3
     first = payload["news"][0]
-    assert "title_cn" in first
-    assert "why_it_matters" in first
+    assert first["source"] == "OpenAI"
+    assert first["source_type"] == "official"
+    assert first["why_it_matters"] == ""
+    assert first["title_cn"] == first["title_original"]
 
 
-def test_get_daily_by_date() -> None:
-    response = client.get("/api/v1/daily/2026-09-09")
+def test_get_daily_by_date(client) -> None:
+    response = client.get("/api/v1/daily/2026-09-10")
+    assert response.status_code == 200
+    assert response.json()["date"] == "2026-09-10"
+
+
+def test_get_news(client) -> None:
+    news_id = stable_news_id("https://openai.com/index/gpt-6-astra")
+    response = client.get(f"/api/v1/news/{news_id}")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["date"] == "2026-09-09"
-    assert payload["news"]
+    assert payload["id"] == news_id
+    assert payload["url"] == "https://openai.com/index/gpt-6-astra"
 
 
-def test_get_news() -> None:
-    response = client.get("/api/v1/news/n-20260910-01")
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["id"] == "n-20260910-01"
-    assert payload["title_cn"]
-    assert payload["url"].startswith("https://")
-
-
-def test_list_github() -> None:
+def test_list_github(client) -> None:
     response = client.get("/api/v1/github")
     assert response.status_code == 200
     payload = response.json()
@@ -54,13 +49,36 @@ def test_list_github() -> None:
     assert "summary_cn" in project
 
 
-def test_daily_not_found() -> None:
+def test_daily_not_found(client) -> None:
     response = client.get("/api/v1/daily/2019-01-01")
     assert response.status_code == 404
     assert response.json()["detail"] == "Daily digest not found"
 
 
-def test_news_not_found() -> None:
+def test_news_not_found(client) -> None:
     response = client.get("/api/v1/news/missing-id")
     assert response.status_code == 404
     assert response.json()["detail"] == "News item not found"
+
+
+def test_daily_ok_when_refresh_fails(monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    from fastapi.testclient import TestClient
+
+    from app.collectors.openai import CollectResult
+    from app.main import app
+
+    monkeypatch.setattr(
+        "app.services.digest_store.collect_openai_news",
+        lambda **kwargs: CollectResult(error="offline"),
+    )
+    monkeypatch.setattr(
+        "app.services.digest_store.now_utc",
+        lambda: datetime(2026, 9, 10, 20, tzinfo=timezone.utc),
+    )
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/daily")
+        assert response.status_code == 200
+        assert response.json()["news"] == []

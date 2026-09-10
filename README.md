@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 2 - Mock API 与 Mobile 联调
+Phase 3 - OpenAI News RSS
 
-Mobile 的今日、GitHub、新闻详情和历史日报从 FastAPI mock API 读取。收藏页仍使用本地静态数据。尚未接入真实新闻源、GitHub API 或 LLM。
+今日日报来自 OpenAI 官方 RSS。GitHub 页面仍为 mock。尚未实现中文 AI 摘要、数据库或定时任务。
 
 ## 目录结构
 
@@ -95,6 +95,34 @@ uv run pytest
 ```
 
 开发环境开启了宽松 CORS，仅用于本地联调，生产环境不要使用 `allow_origins=["*"]`。
+
+
+## 当前真实来源
+
+- OpenAI News RSS：`https://openai.com/news/rss.xml`
+- 只解析 RSS，不爬 OpenAI HTML 页面
+- 最近 24 小时内的文章进入今日日报
+- 当前直接使用 RSS 原标题和原摘要，没有中文翻译或 AI 摘要
+- GitHub 页面仍返回 Phase 2 mock 数据
+
+手动测试 collector：
+
+```bash
+cd backend
+uv run python -m app.collectors.openai
+```
+
+会打印：
+
+```text
+Fetched: X
+Valid: X
+Skipped: X
+Last 24h: X
+published_at | title
+```
+
+应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都访问 OpenAI。
 
 ## Mobile 连接 Backend
 
