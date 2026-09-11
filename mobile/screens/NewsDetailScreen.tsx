@@ -52,7 +52,7 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
 
             {data.why_it_matters ? (
               <View style={styles.whyBox}>
-                <Text style={styles.sectionLabel}>Why it matters</Text>
+                <Text style={styles.sectionLabel}>为什么值得关注</Text>
                 <Text style={styles.body}>{data.why_it_matters}</Text>
               </View>
             ) : null}

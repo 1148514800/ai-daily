@@ -50,6 +50,9 @@ build/
 Thumbs.db
 desktop.ini
 
+# Local LLM cache
+.cache/
+
 # Local test / temp
 *.log
 tmp/

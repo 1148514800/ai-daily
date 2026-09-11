@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 4 - 多 RSS 来源与规则去重
+Phase 5 - LLM 中文摘要增强
 
-今日日报来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS。GitHub 页面仍为 mock。当前只做规则去重，尚未实现语义级事件聚类、中文翻译、AI 摘要、数据库或定时任务。
+今日日报来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS。去重后由 LLM 生成中文标题、中文摘要、Why it matters 和重要度评分。GitHub 页面仍为 mock。尚未实现语义级事件聚类、数据库或定时任务。
 
 ## 目录结构
 
@@ -106,7 +106,9 @@ uv run pytest
 - 最近 24 小时内的文章进入今日日报
 - 来源失败互相隔离：单个源超时或解析失败时，其余源仍会生成日报
 - 当前只做保守规则去重（canonical URL、48 小时内完全相同标题），没有语义级事件聚类
-- 当前直接使用 RSS 原标题和原摘要，没有中文翻译或 AI 摘要
+- RSS 是事实来源；LLM 只负责中文标题、摘要、Why it matters 和重要度评分
+- LLM 失败或关闭时回退到 RSS 原文，服务仍可启动
+- 成功结果写入本地磁盘 Cache（backend/.cache/），避免重复消耗 Token
 - GitHub 页面仍返回 Phase 2 mock 数据
 
 手动测试单个 OpenAI collector：
@@ -131,6 +133,14 @@ Fetched: X
 Valid: X
 Last 24h: X
 After dedup: X
+
+Candidates: X
+LLM:
+Success: X
+Cache hit: X
+Fallback: X
+Failed: X
+[92] OpenAI | title_cn
 ```
 
 应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都重新访问 RSS。
@@ -163,3 +173,29 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:8000
 ```
 
 修改 `.env` 后需要重启 Expo。
+
+## LLM 配置
+
+复制 `backend/.env.example` 为 `backend/.env`：
+
+```bash
+LLM_ENABLED=true
+LLM_API_KEY=your-key
+LLM_MODEL=your-model
+LLM_BASE_URL=https://api.example.com/v1
+```
+
+说明：
+
+- 不要把 API Key 写进代码或提交 `.env`
+- `LLM_ENABLED=false` 或没有 API Key 时，后端仍返回最近 24 小时去重后的 RSS 原文
+- LLM 只处理 24h + 去重后的候选，不会把历史 RSS 全部送去生成
+- 使用 OpenAI 兼容的 `/chat/completions` 接口
+- 本地 Cache 目录是 `backend/.cache/`，已加入 `.gitignore`
+
+启动后端时会自动读取 `backend/.env`。也可以显式传入：
+
+```bash
+cd backend
+uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```

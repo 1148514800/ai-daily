@@ -50,6 +50,15 @@ def make_fixture_fetch(openai_xml: str, deepmind_xml: str, huggingface_xml: str,
     return fetch
 
 
+@pytest.fixture(autouse=True)
+def disable_llm_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("LLM_ENABLED", "false")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("LLM_CACHE_DIR", str(tmp_path / "llm-cache"))
+
+
 @pytest.fixture
 def patch_rss_feeds(monkeypatch: pytest.MonkeyPatch, openai_rss_xml: str, deepmind_rss_xml: str, huggingface_rss_xml: str):
     fetch = make_fixture_fetch(openai_rss_xml, deepmind_rss_xml, huggingface_rss_xml)

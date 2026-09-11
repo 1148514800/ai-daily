@@ -5,6 +5,7 @@ from app.collectors.rss import CollectResult, article_within_last_hours, collect
 from app.models import DailyDigest, NewsItem
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.normalize import news_item_from_raw
+from app.services.llm import EnrichmentStats, enrich_articles
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class DigestStore:
         self.last_error: str | None = None
         self.last_reports: list[CollectResult] = []
         self.last_recent_count: int = 0
+        self.last_llm_stats: EnrichmentStats = EnrichmentStats()
 
     def refresh(self, now: datetime | None = None, fetch_text=None) -> list[CollectResult]:
         current = now or now_utc()
@@ -59,11 +61,33 @@ class DigestStore:
         recent = [article for article in merged if article_within_last_hours(article, current)]
         self.last_recent_count = len(recent)
         deduped = dedupe_articles(recent)
-        news_items = [news_item_from_raw(article) for article in deduped]
+
+        try:
+            news_items, llm_stats = enrich_articles(deduped)
+        except Exception:
+            logger.exception("llm enrichment failed; using original RSS content")
+            news_items = [news_item_from_raw(article) for article in deduped]
+            llm_stats = EnrichmentStats(
+                candidates=len(deduped),
+                fallback=len(deduped),
+                failed=len(deduped),
+            )
+        self.last_llm_stats = llm_stats
+        logger.info(
+            "llm candidates=%s calls=%s cache_hits=%s success=%s fallback=%s failed=%s input_tokens=%s output_tokens=%s",
+            llm_stats.candidates,
+            llm_stats.llm_calls,
+            llm_stats.cache_hits,
+            llm_stats.success,
+            llm_stats.fallback,
+            llm_stats.failed,
+            llm_stats.input_tokens,
+            llm_stats.output_tokens,
+        )
 
         sources = sorted({item.source for item in news_items})
         if news_items:
-            description = f"来自 { '、'.join(sources) } 的 {len(news_items)} 条更新。"
+            description = f"来自 {'、'.join(sources)} 的 {len(news_items)} 条更新。"
         else:
             description = "今天还没有新的 AI 资讯。"
 

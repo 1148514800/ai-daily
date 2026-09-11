@@ -87,3 +87,15 @@ def test_daily_ok_when_refresh_fails(monkeypatch) -> None:
         response = test_client.get("/api/v1/daily")
         assert response.status_code == 200
         assert response.json()["news"] == []
+
+
+def test_daily_keeps_importance_score_optional(client) -> None:
+    payload = client.get('/api/v1/daily').json()
+    first = payload['news'][0]
+    assert 'id' in first
+    assert 'title_cn' in first
+    assert 'title_original' in first
+    assert 'summary' in first
+    assert 'why_it_matters' in first
+    assert 'importance_score' in first
+    assert first['importance_score'] is None

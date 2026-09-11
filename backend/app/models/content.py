@@ -22,6 +22,7 @@ class NewsItem(BaseModel):
     category: NewsCategory
     tags: list[str]
     url: str
+    importance_score: int | None = None
 
 
 class GitHubProject(BaseModel):

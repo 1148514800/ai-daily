@@ -12,6 +12,7 @@ export type NewsItem = {
   category: NewsCategory;
   tags: string[];
   url: string;
+  importance_score?: number | null;
 };
 
 export type GitHubProject = {
