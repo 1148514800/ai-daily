@@ -4,7 +4,7 @@
 
 ## 当前开发阶段
 
-Phase 6 - GitHub Trending
+Phase 6.1 - GitHub AI Filtering
 
 今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。数据目前保存在内存中，尚未做数据库或定时任务。
 
@@ -110,6 +110,15 @@ uv run pytest
 - LLM 失败或关闭时回退到 RSS 原文，服务仍可启动
 - 成功结果写入本地磁盘 Cache（backend/.cache/），避免重复消耗 Token
 - GitHub Trending：真实，来自 https://github.com/trending?since=daily
+- GitHub AI 筛选使用确定性规则，不调用 LLM 分类
+- 关键词分两层：Core/Strong（如 `llm`、`rag`、`diffusion`、`machine-learning`、`stable-diffusion`、`langchain`，以及工具类的 `mcp`）与 Weak（如 `agent`、`model`、`vision`、`chat`、`copilot`）
+- 评分：topics 强关键词 +4、description 强关键词 +3、repo/name 强关键词 +2、弱关键词每个 +1（上限 3）
+- 入选必须存在 Core 证据：description/name 里的 Core 关键词直接入选；只有 topics 命中 Core 时需要达到分数阈值
+- 工具关键词（如 `mcp`）不能单独入选，必须另有 Core 证据佐证，因为普通开发工具也常自称 MCP tools / AI agents
+- Weak 关键词不能单独入选，需要 2 个来自不同字段的 Weak 关键词，且必须另有 Core 证据
+- 只有 topics 命中、description 与 name 都没有 Core 关键词时不会入选，避免自填 topics 造成误报
+- 保守 negative hints（`crm`、`todo`、`game`、`adhd` 等）会否决上述所有情况，但 description/name 中的 Core 证据仍然生效
+- GitHub REST metadata 可用时按常规规则判断；metadata 不可用（例如匿名 rate limit）时自动切换 strict fallback，只接受 description/name 中的 Core 证据
 
 手动测试单个 OpenAI collector：
 
@@ -141,6 +150,37 @@ Cache hit: X
 Fallback: X
 Failed: X
 [92] OpenAI | title_cn
+```
+
+GitHub 部分会打印筛选结果，默认只显示入选项目和拒绝数量：
+
+```text
+GitHub Trending
+Fetched: 16
+Parsed: 16
+AI candidates: 1
+Metadata success: 0
+Selected: 1
+
+AI filtering:
+
+ACCEPT
+#8 nashsu/llm_wiki
+score=6
+strong=[llm, rag]
+weak=[]
+source=description/name
+
+(15 rejected; set AI_DAILY_DEBUG_GITHUB=1 for per-repo reasons)
+
+Accepted: 1/16
+```
+
+设置 `AI_DAILY_DEBUG_GITHUB=1` 可以看到每个仓库的 `mode`、`route`、`metadata`、`negative` 与 `reason`：
+
+```bash
+cd backend
+AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 ```
 
 应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都重新访问 RSS。

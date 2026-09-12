@@ -4,15 +4,57 @@ import logging
 from dataclasses import dataclass, field
 
 from app.collectors.github_trending import collect_trending
-from app.config.github import MAX_PROJECTS, MIN_AI_SCORE
+from app.config.github import MAX_PROJECTS
 from app.models import GitHubProject
-from app.pipelines.github_filter import is_ai_repo
+from app.pipelines.github_filter import AIRelevance, evaluate_ai_relevance
 from app.pipelines.github_normalize import project_from_trending
 from app.services.github_client import GitHubClient, RepoMetadata
 from app.services.llm.enrich import EnrichmentStats
 from app.services.llm.github_enrich import enrich_github_projects
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RepoDecision:
+    """One accept/reject decision, kept for logging and debug output."""
+
+    rank: int
+    repo: str
+    accepted: bool
+    score: int
+    route: str
+    reason: str
+    mode: str
+    strong: list[str]
+    weak: list[str]
+    matched_fields: list[str]
+    negative: list[str]
+    metadata_available: bool
+
+    @classmethod
+    def from_relevance(
+        cls,
+        rank: int,
+        repo: str,
+        relevance: AIRelevance,
+        *,
+        metadata_available: bool,
+    ) -> "RepoDecision":
+        return cls(
+            rank=rank,
+            repo=repo,
+            accepted=relevance.accepted,
+            score=relevance.score,
+            route=relevance.route,
+            reason=relevance.reason,
+            mode=relevance.mode,
+            strong=relevance.strong_keywords,
+            weak=relevance.weak_keywords,
+            matched_fields=relevance.matched_fields,
+            negative=relevance.negative_keywords,
+            metadata_available=metadata_available,
+        )
 
 
 @dataclass
@@ -27,6 +69,7 @@ class GitHubRefreshStats:
     rate_limit_remaining: int | None = None
     rate_limit_limit: int | None = None
     llm_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
+    decisions: list[RepoDecision] = field(default_factory=list)
 
 
 class GitHubStore:
@@ -66,6 +109,7 @@ class GitHubStore:
 
         client = github_client or GitHubClient()
         candidates: list[GitHubProject] = []
+        decisions: list[RepoDecision] = []
         for raw in result.parsed:
             metadata: RepoMetadata | None = None
             if not client.rate_limited:
@@ -73,9 +117,21 @@ class GitHubStore:
                 metadata = client.get_repo(owner, name)
                 if metadata is not None:
                     stats.metadata_success += 1
-            if is_ai_repo(raw, metadata, threshold=MIN_AI_SCORE):
+            # Missing metadata automatically switches the filter to strict mode,
+            # so anonymous rate limits cannot inflate the candidate list.
+            relevance = evaluate_ai_relevance(raw, metadata)
+            decisions.append(
+                RepoDecision.from_relevance(
+                    raw.rank,
+                    raw.repo,
+                    relevance,
+                    metadata_available=metadata is not None,
+                )
+            )
+            if relevance.accepted:
                 candidates.append(project_from_trending(raw, metadata))
 
+        stats.decisions = decisions
         stats.ai_candidates = len(candidates)
         selected = candidates[:MAX_PROJECTS]
         enrich_fn = enrich or enrich_github_projects
