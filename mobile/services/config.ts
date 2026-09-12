@@ -1,2 +1,9 @@
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+import { getApiBaseUrl } from './backendSettings';
+
+/**
+ * Resolved on every request so a backend address saved in settings takes effect
+ * immediately, without restarting the app.
+ */
+export function apiBaseUrl(): string {
+  return getApiBaseUrl();
+}

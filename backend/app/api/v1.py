@@ -1,6 +1,7 @@
 from datetime import timezone
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import text
 
 from app.api.schemas import (
     DigestSummary,
@@ -12,8 +13,10 @@ from app.api.schemas import (
     PushTestResult,
     RefreshRunSummary,
     RefreshStatus,
+    SystemStatus,
 )
 from app.config.push import push_enabled
+from app.config.schedule import scheduler_enabled
 from app.config.timezone import app_timezone
 from app.db.repositories import (
     VALID_ITEM_TYPES,
@@ -120,6 +123,33 @@ def get_refresh_status() -> RefreshStatus:
         is_running=is_refresh_running(),
         last_run=last_run,
         next_run_at=next_run_at(),
+    )
+
+
+@router.get("/system/status", response_model=SystemStatus)
+def get_system_status() -> SystemStatus:
+    """Deployment health check for the local long-running backend.
+
+    Deliberately shallow: it reports that the API can reach SQLite and the
+    scheduler configuration, without exposing connection strings or keys.
+    """
+    database = "ok"
+    latest = None
+    session = new_session()
+    try:
+        session.execute(text("SELECT 1"))
+        latest = RefreshRunRepository(session).latest()
+    except Exception:
+        database = "error"
+    finally:
+        session.close()
+
+    return SystemStatus(
+        status="ok" if database == "ok" else "degraded",
+        database=database,
+        scheduler_enabled=scheduler_enabled(),
+        last_refresh_status=latest.status if latest is not None else None,
+        last_refresh_date=latest.digest_date if latest is not None else None,
     )
 
 

@@ -7,7 +7,7 @@ import { fetchGithubProjects } from '../services/api';
 import { colors, spacing, typography } from '../theme';
 
 export function GitHubScreen() {
-  const { status, data, reload } = useAsyncResource(fetchGithubProjects);
+  const { status, data, error, reload } = useAsyncResource(fetchGithubProjects);
 
   return (
     <Screen>
@@ -16,6 +16,7 @@ export function GitHubScreen() {
         error={status === 'error'}
         empty={status === 'success' && !!data && data.length === 0}
         loadingText="正在加载 GitHub 项目..."
+        errorText={error?.message}
         emptyText="暂时没有 GitHub 项目"
         onRetry={reload}
       >

@@ -11,7 +11,7 @@ type HistoryScreenProps = {
 };
 
 export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
-  const { status, data, reload } = useAsyncResource(fetchDigests);
+  const { status, data, error, reload } = useAsyncResource(fetchDigests);
 
   return (
     <Screen>
@@ -20,6 +20,7 @@ export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
         error={status === 'error'}
         empty={status === 'success' && !!data && data.length === 0}
         loadingText="正在加载历史日报..."
+        errorText={error?.message}
         emptyText="暂时没有历史日报"
         onRetry={reload}
       >

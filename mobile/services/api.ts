@@ -7,7 +7,7 @@ import type {
   NewsItem,
   RefreshStatus,
 } from '../types';
-import { API_BASE_URL } from './config';
+import { apiBaseUrl } from './config';
 
 export class ApiError extends Error {
   status: number;
@@ -25,18 +25,33 @@ type RequestOptions = {
   fallbackMessage?: string;
 };
 
+/**
+ * Request budget. Without this, a host that silently drops packets (a phone on
+ * the wrong Wi-Fi, a laptop that changed IP) leaves the UI stuck on "loading"
+ * until the OS TCP timeout, which can take minutes.
+ */
+const REQUEST_TIMEOUT_MS = 12000;
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, fallbackMessage = '内容加载失败' } = options;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
-    throw new ApiError('网络连接失败，请检查后端是否已启动', 0);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError('连接 AI Daily 服务超时，请检查后端地址与网络', 0);
+    }
+    throw new ApiError('无法连接 AI Daily 服务，请检查后端地址与网络', 0);
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {
@@ -95,22 +110,4 @@ export function deleteFavorite(favoriteId: number): Promise<void> {
 
 export function fetchRefreshStatus(): Promise<RefreshStatus> {
   return request<RefreshStatus>('/api/v1/refresh/status');
-}
-
-export function registerPushDevice(
-  expoPushToken: string,
-  platform: 'android' | 'ios',
-): Promise<void> {
-  return request<void>('/api/v1/push/register', {
-    method: 'POST',
-    body: { expo_push_token: expoPushToken, platform },
-    fallbackMessage: '通知注册失败',
-  });
-}
-
-export function unregisterPushDevice(expoPushToken: string): Promise<void> {
-  return request<void>(
-    `/api/v1/push/register?expo_push_token=${encodeURIComponent(expoPushToken)}`,
-    { method: 'DELETE', fallbackMessage: '关闭通知失败' },
-  );
 }

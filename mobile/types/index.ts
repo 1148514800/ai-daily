@@ -77,4 +77,4 @@ export type RefreshStatus = {
   next_run_at: string | null;
 };
 
-export type TabKey = 'today' | 'github' | 'favorites' | 'history';
+export type TabKey = 'today' | 'github' | 'favorites' | 'history' | 'settings';

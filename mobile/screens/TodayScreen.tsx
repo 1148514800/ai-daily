@@ -9,7 +9,7 @@ type TodayScreenProps = {
 };
 
 export function TodayScreen({ onOpenNews }: TodayScreenProps) {
-  const { status, data, reload } = useAsyncResource(fetchTodayDaily);
+  const { status, data, error, reload } = useAsyncResource(fetchTodayDaily);
 
   return (
     <Screen>
@@ -18,6 +18,7 @@ export function TodayScreen({ onOpenNews }: TodayScreenProps) {
         error={status === 'error'}
         empty={status === 'success' && !!data && data.news.length === 0}
         loadingText="正在加载今日资讯..."
+        errorText={error?.message}
         emptyText="今天还没有生成日报"
         onRetry={reload}
       >

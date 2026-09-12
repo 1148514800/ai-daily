@@ -37,6 +37,7 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
         error={status === 'error' && !notFound}
         empty={notFound}
         loadingText="正在加载新闻详情..."
+        errorText={error?.message}
         emptyText="没有找到这条内容。"
         onRetry={notFound ? undefined : reload}
       >

@@ -3,7 +3,6 @@ import type { DailyDigest, NewsCategory, NewsItem } from '../types';
 import { formatLongDate } from '../lib/format';
 import { colors, spacing, typography } from '../theme';
 import { NewsCard } from './NewsCard';
-import { NotificationToggle } from './NotificationToggle';
 import { SectionHeader } from './SectionHeader';
 import { UpdateHint } from './UpdateHint';
 
@@ -31,7 +30,6 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
       <Text style={styles.count}>今日精选 {digest.news.length} 条 AI 动态</Text>
       <Text style={styles.description}>{digest.description}</Text>
       <UpdateHint />
-      {showFinishedHint ? <NotificationToggle /> : null}
 
       {SECTIONS.map((section) => {
         const items = digest.news.filter((item) => item.category === section.category);

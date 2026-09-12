@@ -60,3 +60,7 @@ temp/
 
 # Local SQLite database
 backend/data/
+
+# Local database backups and runtime logs
+backups/
+logs/

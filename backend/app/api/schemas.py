@@ -80,3 +80,13 @@ class PushTestResult(BaseModel):
     failed: int
     skipped_reason: str | None = None
     error: str | None = None
+
+
+class SystemStatus(BaseModel):
+    """Deployment health summary. Never includes secrets or connection strings."""
+
+    status: str
+    database: str
+    scheduler_enabled: bool
+    last_refresh_status: str | None = None
+    last_refresh_date: str | None = None

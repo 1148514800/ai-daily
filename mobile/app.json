@@ -11,8 +11,6 @@
     },
     "android": {
       "package": "com.aidaily.app",
-      "googleServicesFile": "./google-services.json",
-      "permissions": ["POST_NOTIFICATIONS"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -23,10 +21,11 @@
     },
     "plugins": [
       [
-        "expo-notifications",
+        "expo-build-properties",
         {
-          "color": "#2155CD",
-          "defaultChannel": "daily-digest"
+          "android": {
+            "usesCleartextTraffic": true
+          }
         }
       ]
     ],

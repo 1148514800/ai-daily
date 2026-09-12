@@ -4,9 +4,11 @@
 
 ## 当前开发阶段
 
-Phase 9 - Android Push Notification
+Phase 10 - Local Deployment
 
-今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新，成功后通过 Expo Push Service 给已注册的 Android 设备发送一条日报通知。
+今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
+
+当前阶段的目标是让整套系统在本地 Windows 电脑上长期运行，并生成可以直接安装到真机的 Android APK。App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
 ## 目录结构
 
@@ -14,6 +16,9 @@ Phase 9 - Android Push Notification
 ai-daily/
 ├── mobile/          # Expo + React Native + TypeScript 客户端
 ├── backend/         # FastAPI 后端
+├── scripts/         # 本地部署脚本（启动 / 自启动 / 备份）
+├── backups/         # SQLite 备份输出（已 gitignore）
+├── logs/            # 后端运行日志（已 gitignore）
 ├── tests/           # 仓库级测试预留目录
 ├── docs/            # 项目文档预留目录
 ├── AGENTS.md        # 长期开发规则
@@ -31,13 +36,21 @@ cd mobile
 npm start
 ```
 
-然后按终端提示使用 Expo Go 或 Android 模拟器打开。普通 UI 开发仍可用 Expo Go，但远程 Push 通知必须使用 Development Build（见 Android Push Setup）。
+然后按终端提示使用 Expo Go 或 Android 模拟器打开。真机安装与发布见 [Local Deployment](#11-生成可安装的-apk)。
 
 其他常用命令：
 
 ```bash
 cd mobile
 npm run android
+```
+
+类型检查与单元测试：
+
+```bash
+cd mobile
+npm run typecheck
+npm test
 ```
 
 ## Backend 启动方式
@@ -58,6 +71,8 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 cd backend
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+长期运行（不使用 `--reload`，单 worker）见 [Local Deployment](#2-启动-backend)。
 
 健康检查：
 
@@ -91,6 +106,7 @@ GET /api/v1/favorites
 POST /api/v1/favorites
 DELETE /api/v1/favorites/{favorite_id}
 GET /api/v1/refresh/status
+GET /api/v1/system/status
 ```
 
 运行后端测试：
@@ -98,6 +114,14 @@ GET /api/v1/refresh/status
 ```bash
 cd backend
 uv run pytest
+```
+
+运行 Mobile 类型检查与单元测试：
+
+```bash
+cd mobile
+npx tsc --noEmit
+npm test
 ```
 
 开发环境开启了宽松 CORS，仅用于本地联调，生产环境不要使用 `allow_origins=["*"]`。
@@ -283,112 +307,76 @@ status: running / success / failed
 
 成功判定依据是日报真的写入数据库且有内容；单个 RSS 源失败不影响整体结果，全部采集失败或数据库写入失败会记录为 `failed`，且不会覆盖当天已存在的有效日报。
 
-## Android Push Setup
+## Push 状态（本阶段不使用系统通知）
 
-每天日报成功生成后，后端会通过 Expo Push Service 向已注册设备发送一条通知：
-
-```text
-AI Daily 已更新
-今日精选 5 条 AI 动态 · 2 个 GitHub 项目
-```
-
-`github_count` 为 0 时只显示新闻部分；点击通知进入 App 的“今日”页。
-
-### 前置条件
+产品决策：**当前不使用系统 Push 通知**。
 
 ```text
-Expo Go 无法完成当前 Android remote push 验收
-必须安装本项目自己的 Development Build
+App 打开 → 主动请求 /api/v1/daily → 显示最新日报
 ```
 
-Android 底层仍然需要 Firebase / FCM：
+因此本阶段：
 
-1. 在 Firebase Console 建 Android 应用，包名与 `mobile/app.json` 的 `android.package` 一致
-2. 下载 `google-services.json` 放到 `mobile/`（客户端配置）
-3. 把 FCM v1 服务账号私钥上传到 EAS，不要在仓库里保存
+- 不需要 Firebase
+- 不需要 FCM
+- 不需要 Expo Push Token
+- 不需要 `google-services.json`
 
-```bash
-cd mobile
-npx eas init                  # 写入 extra.eas.projectId
-npx eas credentials           # 选择 Android -> Google Service Account
-```
+APK 构建不再依赖任何推送凭据，`mobile/app.json` 中已删除 `googleServicesFile` 与 `expo-notifications` 插件，客户端依赖中也已移除 `expo-notifications` / `expo-device`。
 
-`google-services.json` 是客户端配置，可按项目需要提交；Firebase service account 私钥是服务端密钥，绝对不能提交 Git（`.gitignore` 已排除 `*-firebase-adminsdk-*.json`、`service-account*.json`）。
-
-### 生成 Development Build
-
-```bash
-cd mobile
-npx eas build --profile development --platform android
-```
-
-装到手机后：
-
-```bash
-cd mobile
-npx expo start --dev-client
-```
-
-普通 UI 开发、API 调试、Push Token 与通知都在这一个 Development Build 里完成。
-
-### Push 注册流程
-
-```text
-App 启动
-↓
-检查通知权限（未授权才请求一次，Android 13+ 走 POST_NOTIFICATIONS）
-↓
-生成 Expo Push Token
-↓
-POST /api/v1/push/register
-```
-
-用户拒绝权限时 App 照常阅读日报，不会反复弹窗；“今日”页有“每日通知”开关，关闭时服务端只把设备置为 `enabled=false`，不删除记录。
-
-### Backend 配置
+Backend 的 Push 代码仍然保留，但处于 dormant 状态：
 
 ```bash
 PUSH_ENABLED=false
-EXPO_PUSH_URL=https://exp.host/--/api/v2/push/send
 ```
 
-默认关闭，未配置 Push 也能正常启动。开启后才有通知，并允许开发用测试接口：
+`PUSH_ENABLED=false` 时不会请求 Firebase、不会请求 Expo Push、不会注册 Token，也不影响 App 启动、Scheduler 和日报生成（有测试覆盖）。
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/push/test
-```
+客户端侧已完全移除推送代码与依赖：App 不再申请通知权限、不再获取 Push Token、不再在启动时注册。未来若需要恢复通知，可参考 Phase 9 的提交重新接入 `expo-notifications` 并配置 Firebase / FCM。
 
-该接口固定发送 `AI Daily 测试通知`，不接受客户端自定义 title / body / token，避免变成开放 Push Relay；生产环境应保持关闭。
-
-### 行为说明
-
-- 只有 `scheduled` 与 `startup_catchup` 成功后才推送；`manual`（CLI / 调试）默认不推送
-- Push 失败不影响日报生成，`RefreshRun` 仍为 `success`
-- 同一天只通知一次：`daily_digests.notified_at` 为空才发送，至少一台设备成功后才写入
-- 部分设备失败不影响整体；Expo 返回 `DeviceNotRegistered` 时自动把该 token 置为 `enabled=false`
-- 本阶段只处理发送接口的即时响应，后续生产阶段可增加 Expo Push Receipt 检查
-
-Push 状态（不返回完整 Token）：
+推送相关接口（保留但默认关闭）：
 
 ```text
-GET /api/v1/push/status
+GET  /api/v1/push/status
+POST /api/v1/push/register
+POST /api/v1/push/test     # 仅 PUSH_ENABLED=true 时可用
 ```
 
 ## Mobile 连接 Backend
 
-默认 API 地址：
+App 请求的地址按以下优先级解析：
 
 ```text
-http://127.0.0.1:8000
+1. 用户在「设置 → Backend 地址」中保存的地址（AsyncStorage）
+2. EXPO_PUBLIC_API_BASE_URL（构建时写入）
+3. http://127.0.0.1:8000（兜底）
 ```
 
-Expo 通过环境变量读取：
+推荐做法：**在 App 内填写 Backend 地址**，而不是把局域网 IP 编译进 APK。
+
+原因：
+
+- 电脑 IP 改变后不需要重新编译 APK
+- 换 Wi-Fi、换电脑、以后搬到云服务器都只需要改设置
+- 代码里不出现任何具体局域网 IP
+
+### 设置页行为
 
 ```text
-EXPO_PUBLIC_API_BASE_URL
+设置 → Backend 地址
+→ 输入 http://192.168.1.100:8000
+→ 测试连接（调用 GET /health）
+→ 连接成功 / 无法连接服务器
+→ 保存
 ```
 
-复制 `mobile/.env.example` 为 `mobile/.env` 后按环境修改：
+- 只接受 `http://` 或 `https://` 开头的合法 URL，明显无效的地址不会保存
+- 「恢复默认地址」会清除本地保存的值，回到构建时的默认值
+- 保存后立即生效，不需要重启 App
+
+### 构建时默认值（可选）
+
+复制 `mobile/.env.example` 为 `mobile/.env` 并按环境修改：
 
 ```bash
 # 本机 / Expo web
@@ -397,11 +385,31 @@ EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 # Android 模拟器
 EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8000
 
-# 真机：改成电脑的局域网 IP，不要把该 IP 提交进仓库
+# 真机：电脑的局域网 IP，不要把该 IP 提交进仓库
 EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:8000
 ```
 
 修改 `.env` 后需要重启 Expo。
+
+### 离线行为
+
+Backend 不可达时 App 不会崩溃，会显示：
+
+```text
+无法连接 AI Daily 服务，请检查后端地址与网络
+```
+
+以及「重新加载」按钮。SQLite 在 Backend 侧，本阶段不实现手机端离线数据库。
+
+### Android Cleartext
+
+本地部署使用 HTTP。Release APK 默认禁止明文流量，因此 `mobile/app.json` 通过 `expo-build-properties` 显式开启：
+
+```json
+{ "android": { "usesCleartextTraffic": true } }
+```
+
+这是针对当前 App 的最小配置。未来迁移到云服务器时应改用 HTTPS 并移除该项。
 
 ## LLM 配置
 
@@ -429,6 +437,243 @@ cd backend
 uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+## Local Deployment
+
+本阶段部署在**用户自己的 Windows 电脑**上，目标是可以长期运行、重启后仍能使用。
+
+架构：
+
+```text
+Windows 电脑
+├── FastAPI Backend
+├── SQLite（backend/data/ai_daily.db）
+├── APScheduler（每天 08:00 自动刷新）
+└── HTTP :8000
+        ↓  局域网
+   Android APK（用户主动打开 → 拉取最新日报）
+```
+
+本阶段不使用 Docker、PostgreSQL、Nginx、Redis 或云服务器。
+
+### 1. Backend `.env`
+
+```bash
+cd backend
+copy .env.example .env
+```
+
+本地长期运行建议值：
+
+```bash
+APP_TIMEZONE=Asia/Shanghai
+SCHEDULER_ENABLED=true
+DAILY_REFRESH_HOUR=8
+DAILY_REFRESH_MINUTE=0
+DATABASE_URL=sqlite:///./data/ai_daily.db
+PUSH_ENABLED=false
+```
+
+LLM 与 GitHub Token 都可以留空：
+
+- `LLM_ENABLED=false` 时日报回退为英文原文，功能正常
+- 未配置 `GITHUB_TOKEN` 时使用 strict fallback，功能正常，但受 60 requests/hour 匿名限制
+
+`backend/.env` 不提交 Git。
+
+### 2. 启动 Backend
+
+**生产式启动**（不使用 `--reload`）：
+
+```bash
+cd backend
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+或者使用脚本（会同时打印手机可用的局域网 URL 并写日志）：
+
+```powershell
+.\scripts\start_backend.ps1
+```
+
+> 只使用 **1 个 worker**。APScheduler 是进程内调度器，`--workers 4` 会导致多个进程各自启动 Scheduler 并重复执行日报任务。
+
+验证：
+
+```text
+电脑浏览器：http://127.0.0.1:8000/health      → {"status":"ok"}
+```
+
+部署自检（不含任何 Secret）：
+
+```text
+GET /api/v1/system/status
+→ {"status":"ok","database":"ok","scheduler_enabled":true,...}
+```
+
+### 3. Windows 开机自启动
+
+创建计划任务（**不需要管理员权限**，登录后自动运行，可重复执行）：
+
+```powershell
+.\scripts\install_startup_task.ps1
+```
+
+删除计划任务：
+
+```powershell
+.\scripts\uninstall_startup_task.ps1
+```
+
+任务名为 `AI Daily Backend`。可用以下命令确认：
+
+```powershell
+Get-ScheduledTask -TaskName 'AI Daily Backend' | Select-Object TaskName, State
+```
+
+### 4. 获取电脑局域网 IP
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+  Select-Object IPAddress, InterfaceAlias
+```
+
+例如得到 `192.168.0.107`，那么手机应访问：
+
+```text
+http://192.168.0.107:8000
+```
+
+建议在路由器里为这台电脑设置 **DHCP Static Lease**（固定 IP），这样地址不会变化。
+
+### 5. Windows Defender Firewall
+
+手机打不开 `http://电脑IP:8000/health` 时，通常是防火墙拦截。
+
+只放行 **TCP 8000**，并且只对 **专用网络（Private）** 生效：
+
+```powershell
+New-NetFirewallRule -DisplayName 'AI Daily Backend (TCP 8000)' `
+  -Direction Inbound -Protocol TCP -LocalPort 8000 `
+  -Profile Private -Action Allow
+```
+
+删除该规则：
+
+```powershell
+Remove-NetFirewallRule -DisplayName 'AI Daily Backend (TCP 8000)'
+```
+
+> 不要直接关闭整个 Windows Defender Firewall。
+
+### 6. App 配置 Backend URL
+
+安装 APK 后，打开 App 的「设置」页填写 Backend 地址（见上一节）。不需要重新编译 APK。
+
+### 7. Scheduler
+
+```text
+每天 08:00（APP_TIMEZONE）自动 refresh
+```
+
+检查状态：
+
+```text
+GET /api/v1/refresh/status
+→ scheduler_enabled=true, next_run_at=次日 08:00
+```
+
+不用等到第二天验证：可以先在 App 里触发一次手动刷新，或者：
+
+```bash
+cd backend
+uv run python -m app.collectors.refresh
+```
+
+### 8. SQLite 位置
+
+```text
+backend/data/ai_daily.db
+```
+
+数据库中包含日报、新闻、GitHub 项目和收藏。`backend/data/` 已加入 `.gitignore`。
+
+### 9. 数据备份
+
+```powershell
+.\scripts\backup_db.ps1
+```
+
+行为：
+
+```text
+backend/data/ai_daily.db
+↓
+backups/ai_daily_YYYYMMDD_HHMMSS.db
+```
+
+默认保留最近 14 份（`-Keep 0` 表示全部保留）。当数据库写入很少时直接复制文件即可；`backups/` 已加入 `.gitignore`。
+
+### 10. HTTP 与 HTTPS
+
+```text
+本地部署阶段使用 HTTP。
+未来云服务器阶段改为 HTTPS。
+```
+
+Release APK 默认禁止明文流量，因此 `mobile/app.json` 里通过 `expo-build-properties` 打开了 `android.usesCleartextTraffic`。这是当前 App 的最小必要配置；迁移到 HTTPS 后应当移除。
+
+### 11. 生成可安装的 APK
+
+`mobile/eas.json` 的 `preview` profile 输出 `APK`（不是 AAB），用于直接安装到自己的手机：
+
+```bash
+cd mobile
+npx eas login
+npx eas init                      # 写入 extra.eas.projectId（仅用于 EAS Build，与 Push 无关）
+npx eas build --profile preview --platform android
+```
+
+- 不需要 `google-services.json`
+- 不需要 Firebase / FCM / Expo Push Credentials
+- 签名可使用 EAS Managed Credentials
+- 本阶段不发布 Google Play
+
+构建前可用以下命令确认 resolved config 中没有 Firebase 配置：
+
+```bash
+cd mobile
+npx expo config --type public
+```
+
+应满足：
+
+```text
+android.package = com.aidaily.app
+android.googleServicesFile 不存在
+```
+
+也可以用本地 Android SDK 直接构建：`npx expo prebuild --platform android` 后执行
+`android/gradlew.bat :app:assembleRelease`，产物在 `android/app/build/outputs/apk/release/app-release.apk`。
+`mobile/android/` 与 `mobile/ios/` 都是生成目录，不提交 Git。
+
+### 12. 真机验收清单
+
+1. 浏览器访问 `http://电脑IP:8000/health`，应返回 `{"status":"ok"}`
+2. 安装 APK 并启动 AI Daily
+3. 设置页填写 Backend 地址 → 测试连接 → 保存
+4. 依次确认：今日 / GitHub / 历史 / 收藏
+5. 收藏一条新闻，关闭 App 再打开，确认收藏仍在
+
+手动刷新后检查：
+
+```text
+GET /api/v1/refresh/status
+→ scheduler_enabled=true, next_run_at=次日 08:00
+```
+
+不需要等到 08:00：Scheduler 已由 Phase 8 单测覆盖。
+
 ## 数据来源现状
 
 - RSS：真实
@@ -436,7 +681,7 @@ uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 800
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）
 - 自动定时：APScheduler 每日刷新 + 启动补偿（单进程内）
-- Push：Expo Push Service（默认关闭，需要 Development Build）
+- Push：不使用（产品决策，Backend 代码保留为 dormant，默认 PUSH_ENABLED=false）
 
 GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。
 

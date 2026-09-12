@@ -27,6 +27,7 @@ export function DigestScreen({ date, onBack, onOpenNews }: DigestScreenProps) {
         error={status === 'error' && !notFound}
         empty={notFound || (status === 'success' && !!data && data.news.length === 0)}
         loadingText="正在加载日报..."
+        errorText={error?.message}
         emptyText="没有找到这一天的日报。"
         onRetry={notFound ? undefined : reload}
       >

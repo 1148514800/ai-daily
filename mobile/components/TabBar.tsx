@@ -7,6 +7,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'github', label: 'GitHub' },
   { key: 'favorites', label: '收藏' },
   { key: 'history', label: '历史' },
+  { key: 'settings', label: '设置' },
 ];
 
 type TabBarProps = {
