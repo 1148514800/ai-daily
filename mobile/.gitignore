@@ -39,3 +39,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Firebase service account keys (server-side secret for FCM v1).
+# Never commit these. The client-side google-services.json is separate and,
+# per Expo/Firebase guidance, may be committed when the project requires it.
+*-firebase-adminsdk-*.json
+service-account*.json
+serviceAccount*.json

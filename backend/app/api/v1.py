@@ -6,13 +6,22 @@ from app.api.schemas import (
     DigestSummary,
     FavoriteCreate,
     FavoriteResponse,
+    PushRegisterRequest,
+    PushRegisterResponse,
+    PushStatus,
+    PushTestResult,
     RefreshRunSummary,
     RefreshStatus,
 )
+from app.config.push import push_enabled
 from app.config.timezone import app_timezone
 from app.db.repositories import (
     VALID_ITEM_TYPES,
+    PLATFORM_ANDROID,
+    VALID_PLATFORMS,
+    DigestRepository,
     FavoriteRepository,
+    PushDeviceRepository,
     RefreshRunRepository,
 )
 from app.db.session import new_session
@@ -20,6 +29,8 @@ from app.jobs.daily_refresh import is_refresh_running
 from app.jobs.scheduler import next_run_at, scheduler_state
 from app.models import DailyDigest, GitHubProject, NewsItem
 from app.services.digest_store import store
+from app.services.push import ExpoPushClient, PushMessage
+from app.services.push.service import NOTIFICATION_TITLE
 
 router = APIRouter()
 
@@ -144,6 +155,114 @@ def delete_favorite(favorite_id: int) -> None:
         raise
     finally:
         session.close()
+
+
+def _token_hint(token: str) -> str:
+    """Never return a full push token to a client."""
+    if len(token) <= 12:
+        return "***"
+    return f"{token[:10]}...{token[-4:]}"
+
+
+@router.post("/push/register", response_model=PushRegisterResponse)
+def register_push_device(payload: PushRegisterRequest) -> PushRegisterResponse:
+    """Upsert a device token. Re-registering refreshes the same row."""
+    token = payload.expo_push_token.strip()
+    if not token or not token.startswith("ExponentPushToken"):
+        raise HTTPException(status_code=400, detail="Invalid Expo push token")
+    platform = payload.platform.strip().lower() or PLATFORM_ANDROID
+    if platform not in VALID_PLATFORMS:
+        raise HTTPException(status_code=400, detail="Unsupported platform")
+
+    session = new_session()
+    try:
+        row = PushDeviceRepository(session).register(token, platform)
+        session.commit()
+        return PushRegisterResponse(
+            id=row.id,
+            platform=row.platform,
+            enabled=row.enabled,
+            token_hint=_token_hint(row.expo_push_token),
+        )
+    finally:
+        session.close()
+
+
+@router.delete("/push/register", status_code=204)
+def disable_push_device(expo_push_token: str = Query(...)) -> None:
+    """Turn notifications off for a device while keeping its history."""
+    session = new_session()
+    try:
+        if not PushDeviceRepository(session).disable(expo_push_token.strip()):
+            raise HTTPException(status_code=404, detail="Device not found")
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@router.get("/push/status", response_model=PushStatus)
+def get_push_status() -> PushStatus:
+    session = new_session()
+    try:
+        devices = PushDeviceRepository(session)
+        last_notified = DigestRepository(session).last_notified_at()
+        return PushStatus(
+            push_enabled=push_enabled(),
+            registered_devices=devices.count(),
+            enabled_devices=devices.count_enabled(),
+            last_notified_at=last_notified.isoformat() if last_notified else None,
+        )
+    finally:
+        session.close()
+
+
+@router.post("/push/test", response_model=PushTestResult)
+def send_test_push() -> PushTestResult:
+    """Development-only helper. Sends a fixed test notification, never custom content."""
+    if not push_enabled():
+        raise HTTPException(status_code=403, detail="Push is disabled")
+
+    session = new_session()
+    try:
+        devices = PushDeviceRepository(session).list_enabled()
+    finally:
+        session.close()
+    if not devices:
+        raise HTTPException(status_code=404, detail="No enabled devices")
+
+    messages = [
+        PushMessage(
+            to=device.expo_push_token,
+            title=NOTIFICATION_TITLE,
+            body="AI Daily 测试通知",
+            data={"type": "daily_digest"},
+            channel_id="daily-digest",
+        )
+        for device in devices
+    ]
+    try:
+        result = ExpoPushClient().send(messages)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Push request failed: {exc}") from exc
+
+    if result.stale_tokens:
+        cleanup = new_session()
+        try:
+            repository = PushDeviceRepository(cleanup)
+            for token in result.stale_tokens:
+                repository.disable(token)
+            cleanup.commit()
+        finally:
+            cleanup.close()
+
+    return PushTestResult(
+        attempted=len(messages),
+        delivered=result.delivered,
+        failed=result.failed,
+    )
 
 
 def _resolve_favorite_item(session, item_type: str, item_id: str):

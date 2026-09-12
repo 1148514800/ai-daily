@@ -13,6 +13,7 @@ from app.db.models import (
     FavoriteRow,
     GitHubProjectRow,
     NewsArticleRow,
+    PushDeviceRow,
     RefreshRunRow,
     utcnow,
 )
@@ -31,6 +32,9 @@ VALID_TRIGGERS = (TRIGGER_MANUAL, TRIGGER_SCHEDULED, TRIGGER_STARTUP_CATCHUP)
 RUN_RUNNING = "running"
 RUN_SUCCESS = "success"
 RUN_FAILED = "failed"
+
+PLATFORM_ANDROID = "android"
+VALID_PLATFORMS = (PLATFORM_ANDROID, "ios")
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -232,6 +236,28 @@ class DigestRepository:
             self.session.add(DailyDigestGitHubRow(digest_date=date, github_project_id=github_id, position=position))
         self.session.flush()
 
+    def mark_notified(self, date: str) -> bool:
+        """Remember that a push for this digest already reached a device."""
+        row = self.session.get(DailyDigestRow, date)
+        if row is None:
+            return False
+        row.notified_at = utcnow()
+        self.session.flush()
+        return True
+
+    def notified_at(self, date: str) -> datetime | None:
+        row = self.session.get(DailyDigestRow, date)
+        return row.notified_at if row is not None else None
+
+    def needs_notification(self, date: str) -> bool:
+        row = self.session.get(DailyDigestRow, date)
+        if row is None:
+            return False
+        return row.notified_at is None
+
+    def last_notified_at(self) -> datetime | None:
+        return self.session.scalar(select(func.max(DailyDigestRow.notified_at)))
+
     def exists(self, date: str) -> bool:
         return self.session.get(DailyDigestRow, date) is not None
 
@@ -403,3 +429,78 @@ class RefreshRunRepository:
 
     def count(self) -> int:
         return int(self.session.scalar(select(func.count()).select_from(RefreshRunRow)) or 0)
+
+
+class PushDeviceRepository:
+    """Registration of Expo push tokens for the single-user app."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def register(self, expo_push_token: str, platform: str = PLATFORM_ANDROID) -> PushDeviceRow:
+        """Upsert by token: re-registering a device refreshes it instead of duplicating."""
+        row = self.session.scalar(
+            select(PushDeviceRow).where(PushDeviceRow.expo_push_token == expo_push_token)
+        )
+        now = utcnow()
+        if row is None:
+            row = PushDeviceRow(
+                expo_push_token=expo_push_token,
+                platform=platform,
+                enabled=True,
+                created_at=now,
+                last_seen_at=now,
+            )
+            self.session.add(row)
+        else:
+            row.platform = platform
+            row.enabled = True
+            row.last_seen_at = now
+        self.session.flush()
+        return row
+
+    def get_by_token(self, expo_push_token: str) -> PushDeviceRow | None:
+        return self.session.scalar(
+            select(PushDeviceRow).where(PushDeviceRow.expo_push_token == expo_push_token)
+        )
+
+    def disable(self, expo_push_token: str) -> bool:
+        """Turn notifications off without deleting the historical registration."""
+        row = self.get_by_token(expo_push_token)
+        if row is None:
+            return False
+        row.enabled = False
+        self.session.flush()
+        return True
+
+    def disable_by_id(self, device_id: int) -> bool:
+        row = self.session.get(PushDeviceRow, device_id)
+        if row is None:
+            return False
+        row.enabled = False
+        self.session.flush()
+        return True
+
+    def list_enabled(self) -> list[PushDeviceRow]:
+        statement = (
+            select(PushDeviceRow)
+            .where(PushDeviceRow.enabled.is_(True))
+            .order_by(PushDeviceRow.id)
+        )
+        return list(self.session.scalars(statement).all())
+
+    def list_all(self) -> list[PushDeviceRow]:
+        return list(self.session.scalars(select(PushDeviceRow).order_by(PushDeviceRow.id)).all())
+
+    def count(self) -> int:
+        return int(self.session.scalar(select(func.count()).select_from(PushDeviceRow)) or 0)
+
+    def count_enabled(self) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(PushDeviceRow)
+                .where(PushDeviceRow.enabled.is_(True))
+            )
+            or 0
+        )

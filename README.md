@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 8 - Scheduled Daily Refresh
+Phase 9 - Android Push Notification
 
-今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端现在会在每天固定时间自动刷新，并记录每次执行结果。
+今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新，成功后通过 Expo Push Service 给已注册的 Android 设备发送一条日报通知。
 
 ## 目录结构
 
@@ -31,7 +31,7 @@ cd mobile
 npm start
 ```
 
-然后按终端提示使用 Expo Go 或 Android 模拟器打开。
+然后按终端提示使用 Expo Go 或 Android 模拟器打开。普通 UI 开发仍可用 Expo Go，但远程 Push 通知必须使用 Development Build（见 Android Push Setup）。
 
 其他常用命令：
 
@@ -219,6 +219,7 @@ daily_digest_news    日报与新闻的排序关系
 daily_digest_github  日报与 GitHub 项目的排序关系
 favorites            收藏（item_type + item_id，单用户）
 refresh_runs         每次刷新执行记录（trigger / status / 计数 / 简短错误）
+push_devices         已注册的 Expo Push Token（单用户，token 唯一）
 ```
 
 同一天多次 refresh 只会更新当天日报，不会新增多条；第二天 refresh 会创建新的日报，历史保持不变。如果某次采集没有拿到任何新闻，会保留数据库中已有的当天日报，避免临时网络失败把日报清空。
@@ -282,6 +283,97 @@ status: running / success / failed
 
 成功判定依据是日报真的写入数据库且有内容；单个 RSS 源失败不影响整体结果，全部采集失败或数据库写入失败会记录为 `failed`，且不会覆盖当天已存在的有效日报。
 
+## Android Push Setup
+
+每天日报成功生成后，后端会通过 Expo Push Service 向已注册设备发送一条通知：
+
+```text
+AI Daily 已更新
+今日精选 5 条 AI 动态 · 2 个 GitHub 项目
+```
+
+`github_count` 为 0 时只显示新闻部分；点击通知进入 App 的“今日”页。
+
+### 前置条件
+
+```text
+Expo Go 无法完成当前 Android remote push 验收
+必须安装本项目自己的 Development Build
+```
+
+Android 底层仍然需要 Firebase / FCM：
+
+1. 在 Firebase Console 建 Android 应用，包名与 `mobile/app.json` 的 `android.package` 一致
+2. 下载 `google-services.json` 放到 `mobile/`（客户端配置）
+3. 把 FCM v1 服务账号私钥上传到 EAS，不要在仓库里保存
+
+```bash
+cd mobile
+npx eas init                  # 写入 extra.eas.projectId
+npx eas credentials           # 选择 Android -> Google Service Account
+```
+
+`google-services.json` 是客户端配置，可按项目需要提交；Firebase service account 私钥是服务端密钥，绝对不能提交 Git（`.gitignore` 已排除 `*-firebase-adminsdk-*.json`、`service-account*.json`）。
+
+### 生成 Development Build
+
+```bash
+cd mobile
+npx eas build --profile development --platform android
+```
+
+装到手机后：
+
+```bash
+cd mobile
+npx expo start --dev-client
+```
+
+普通 UI 开发、API 调试、Push Token 与通知都在这一个 Development Build 里完成。
+
+### Push 注册流程
+
+```text
+App 启动
+↓
+检查通知权限（未授权才请求一次，Android 13+ 走 POST_NOTIFICATIONS）
+↓
+生成 Expo Push Token
+↓
+POST /api/v1/push/register
+```
+
+用户拒绝权限时 App 照常阅读日报，不会反复弹窗；“今日”页有“每日通知”开关，关闭时服务端只把设备置为 `enabled=false`，不删除记录。
+
+### Backend 配置
+
+```bash
+PUSH_ENABLED=false
+EXPO_PUSH_URL=https://exp.host/--/api/v2/push/send
+```
+
+默认关闭，未配置 Push 也能正常启动。开启后才有通知，并允许开发用测试接口：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/push/test
+```
+
+该接口固定发送 `AI Daily 测试通知`，不接受客户端自定义 title / body / token，避免变成开放 Push Relay；生产环境应保持关闭。
+
+### 行为说明
+
+- 只有 `scheduled` 与 `startup_catchup` 成功后才推送；`manual`（CLI / 调试）默认不推送
+- Push 失败不影响日报生成，`RefreshRun` 仍为 `success`
+- 同一天只通知一次：`daily_digests.notified_at` 为空才发送，至少一台设备成功后才写入
+- 部分设备失败不影响整体；Expo 返回 `DeviceNotRegistered` 时自动把该 token 置为 `enabled=false`
+- 本阶段只处理发送接口的即时响应，后续生产阶段可增加 Expo Push Receipt 检查
+
+Push 状态（不返回完整 Token）：
+
+```text
+GET /api/v1/push/status
+```
+
 ## Mobile 连接 Backend
 
 默认 API 地址：
@@ -344,6 +436,7 @@ uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 800
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）
 - 自动定时：APScheduler 每日刷新 + 启动补偿（单进程内）
+- Push：Expo Push Service（默认关闭，需要 Development Build）
 
 GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。
 

@@ -6,6 +6,7 @@ from app.db.models import (
     FavoriteRow,
     GitHubProjectRow,
     NewsArticleRow,
+    PushDeviceRow,
     RefreshRunRow,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "FavoriteRow",
     "GitHubProjectRow",
     "NewsArticleRow",
+    "PushDeviceRow",
     "RefreshRunRow",
 ]

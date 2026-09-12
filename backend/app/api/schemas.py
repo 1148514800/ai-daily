@@ -52,3 +52,31 @@ class RefreshStatus(BaseModel):
     is_running: bool
     last_run: RefreshRunSummary | None = None
     next_run_at: str | None = None
+
+
+class PushRegisterRequest(BaseModel):
+    expo_push_token: str
+    platform: str = "android"
+
+
+class PushRegisterResponse(BaseModel):
+    id: int
+    platform: str
+    enabled: bool
+    # Masked on purpose: the status endpoints never echo a full token.
+    token_hint: str
+
+
+class PushStatus(BaseModel):
+    push_enabled: bool
+    registered_devices: int
+    enabled_devices: int
+    last_notified_at: str | None = None
+
+
+class PushTestResult(BaseModel):
+    attempted: int
+    delivered: int
+    failed: int
+    skipped_reason: str | None = None
+    error: str | None = None

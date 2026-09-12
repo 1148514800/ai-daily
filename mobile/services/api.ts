@@ -96,3 +96,21 @@ export function deleteFavorite(favoriteId: number): Promise<void> {
 export function fetchRefreshStatus(): Promise<RefreshStatus> {
   return request<RefreshStatus>('/api/v1/refresh/status');
 }
+
+export function registerPushDevice(
+  expoPushToken: string,
+  platform: 'android' | 'ios',
+): Promise<void> {
+  return request<void>('/api/v1/push/register', {
+    method: 'POST',
+    body: { expo_push_token: expoPushToken, platform },
+    fallbackMessage: '通知注册失败',
+  });
+}
+
+export function unregisterPushDevice(expoPushToken: string): Promise<void> {
+  return request<void>(
+    `/api/v1/push/register?expo_push_token=${encodeURIComponent(expoPushToken)}`,
+    { method: 'DELETE', fallbackMessage: '关闭通知失败' },
+  );
+}

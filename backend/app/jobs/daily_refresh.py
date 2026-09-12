@@ -17,11 +17,14 @@ from app.db.repositories import (
     RUN_FAILED,
     RUN_SUCCESS,
     TRIGGER_MANUAL,
+    TRIGGER_SCHEDULED,
+    TRIGGER_STARTUP_CATCHUP,
     RefreshRunRepository,
 )
 from app.db.session import new_session
 from app.services import refresh_service
 from app.services.digest_store import store
+from app.services.push import PushReport, send_digest_notification
 from app.services.refresh_service import CombinedRefresh, refresh_all
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,9 @@ logger = logging.getLogger(__name__)
 RUN_SKIPPED = "skipped"
 
 MAX_ERROR_LENGTH = 300
+
+# Manual runs are for debugging, so they never ring the phone.
+PUSH_TRIGGERS = (TRIGGER_SCHEDULED, TRIGGER_STARTUP_CATCHUP)
 
 # A threading lock is used because the collection work runs in a worker thread
 # and because CLI runs create their own event loop. It is loop independent and
@@ -49,6 +55,7 @@ class RefreshOutcome:
     duration_seconds: float = 0.0
     error: str | None = None
     combined: CombinedRefresh | None = None
+    push: PushReport | None = None
 
     @property
     def skipped(self) -> bool:
@@ -110,6 +117,24 @@ def _record_finish(outcome: RefreshOutcome) -> None:
 
 def _source_failures(combined: CombinedRefresh) -> list[str]:
     return [report.source_name for report in combined.reports if report.error]
+
+
+def _notify_if_needed(outcome: RefreshOutcome) -> PushReport | None:
+    """Send the digest push after a successful run, never failing the refresh."""
+    if outcome.status != RUN_SUCCESS or outcome.trigger not in PUSH_TRIGGERS:
+        return None
+    if not outcome.date:
+        return None
+    try:
+        return send_digest_notification(
+            date=outcome.date,
+            news_count=outcome.news_count,
+            github_count=outcome.github_count,
+        )
+    except Exception:
+        # Notification is an add-on: the digest is already safely stored.
+        logger.exception("push notification failed date=%s", outcome.date)
+        return None
 
 
 def _evaluate(combined: CombinedRefresh) -> tuple[str, str | None, int, int]:
@@ -199,6 +224,7 @@ def _execute_refresh(
         )
 
     _record_finish(outcome)
+    outcome.push = _notify_if_needed(outcome)
     return outcome
 
 

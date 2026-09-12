@@ -7,6 +7,10 @@ import { GitHubScreen } from '../screens/GitHubScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { NewsDetailScreen } from '../screens/NewsDetailScreen';
 import { TodayScreen } from '../screens/TodayScreen';
+import {
+  addNotificationResponseListener,
+  getLastNotificationResponseData,
+} from '../services/notifications';
 import { colors } from '../theme';
 import type { TabKey } from '../types';
 
@@ -38,6 +42,25 @@ export function RootNavigator() {
     });
     return () => subscription.remove();
   }, [stack.length]);
+
+  useEffect(() => {
+    // A daily-digest tap always lands on "today"; other payloads are ignored.
+    function openFromNotification(data: Record<string, unknown>) {
+      if (data.type !== 'daily_digest') {
+        return;
+      }
+      setTab('today');
+      setStack([{ name: 'tabs' }]);
+    }
+
+    const unsubscribe = addNotificationResponseListener(openFromNotification);
+    void getLastNotificationResponseData().then((data) => {
+      if (data) {
+        openFromNotification(data);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   let screen = null;
   if (current.name === 'news') {

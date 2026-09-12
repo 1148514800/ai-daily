@@ -93,10 +93,41 @@ def reset_database() -> None:
 
 
 def init_db() -> None:
-    """Create tables. No migration system in this phase."""
+    """Create tables and add columns that newer phases introduced."""
     import app.db.models  # noqa: F401  (register mappers)
 
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _add_missing_sqlite_columns(engine)
+
+
+def _add_missing_sqlite_columns(engine: Engine) -> None:
+    """Add newly declared columns to existing tables.
+
+    ``create_all`` only creates missing tables, so a database written by an
+    earlier phase would otherwise be missing new columns. This stays deliberately
+    minimal (ADD COLUMN only) instead of pulling in a migration framework, and it
+    is a no-op on non-SQLite backends.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            existing = {
+                row[1]
+                for row in connection.exec_driver_sql(f'PRAGMA table_info("{table.name}")')
+            }
+            if not existing:
+                continue
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable and column.default is None and column.server_default is None:
+                    # SQLite cannot add a NOT NULL column without a default.
+                    continue
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type.compile(engine.dialect)}'
+                connection.exec_driver_sql(ddl)
 
 
 def new_session() -> Session:
