@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 5 - LLM 中文摘要增强
+Phase 6 - GitHub Trending
 
-今日日报来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS。去重后由 LLM 生成中文标题、中文摘要、Why it matters 和重要度评分。GitHub 页面仍为 mock。尚未实现语义级事件聚类、数据库或定时任务。
+今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。数据目前保存在内存中，尚未做数据库或定时任务。
 
 ## 目录结构
 
@@ -109,7 +109,7 @@ uv run pytest
 - RSS 是事实来源；LLM 只负责中文标题、摘要、Why it matters 和重要度评分
 - LLM 失败或关闭时回退到 RSS 原文，服务仍可启动
 - 成功结果写入本地磁盘 Cache（backend/.cache/），避免重复消耗 Token
-- GitHub 页面仍返回 Phase 2 mock 数据
+- GitHub Trending：真实，来自 https://github.com/trending?since=daily
 
 手动测试单个 OpenAI collector：
 
@@ -199,3 +199,21 @@ LLM_BASE_URL=https://api.example.com/v1
 cd backend
 uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+## 数据来源现状
+
+- RSS：真实
+- GitHub Trending：真实
+- LLM：可选
+- 数据存储：当前内存
+- 自动定时：尚未实现
+
+GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。
+
+可选配置 GitHub Token，提高 REST metadata 的 rate limit：
+
+```bash
+GITHUB_TOKEN=ghp_xxx
+```
+
+没有 Token 时仍会请求公开仓库。Token 只用于后端，不会下发到 Mobile，也不要提交到 Git。

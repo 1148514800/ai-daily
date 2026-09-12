@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { GitHubProject } from '../types';
 import { formatStars, formatStarsDelta } from '../lib/format';
 import { colors, radius, spacing, typography } from '../theme';
@@ -9,24 +9,47 @@ type GitHubCardProps = {
 };
 
 export function GitHubCard({ repo, onPress }: GitHubCardProps) {
+  async function openGithub() {
+    try {
+      await Linking.openURL(repo.url);
+    } catch {
+      Alert.alert('GitHub', '无法打开该仓库链接。');
+    }
+  }
+
+  const delta = formatStarsDelta(repo.stars_delta);
+  const summary = repo.summary_cn || repo.description;
+
   const content = (
     <>
       <View style={styles.topRow}>
         <Text style={styles.name}>{repo.repo}</Text>
       </View>
-      <Text style={styles.description}>{repo.description}</Text>
       <View style={styles.statsRow}>
-        <Text style={styles.stat}>{repo.language}</Text>
-        <Text style={styles.dot}>·</Text>
-        <Text style={styles.stat}>{formatStars(repo.stars)} stars</Text>
-        <Text style={styles.dot}>·</Text>
-        <Text style={styles.delta}>{formatStarsDelta(repo.stars_delta)}</Text>
+        {repo.language ? <Text style={styles.stat}>{repo.language}</Text> : null}
+        {repo.language ? <Text style={styles.dot}>·</Text> : null}
+        <Text style={styles.stat}>⭐ {formatStars(repo.stars)}</Text>
+        {delta ? (
+          <>
+            <Text style={styles.dot}>·</Text>
+            <Text style={styles.delta}>{delta}</Text>
+          </>
+        ) : null}
       </View>
-      <Text style={styles.summary}>{repo.summary_cn}</Text>
-      <View style={styles.whyBox}>
-        <Text style={styles.whyLabel}>为什么值得关注</Text>
-        <Text style={styles.whyText}>{repo.why_it_matters}</Text>
-      </View>
+      {summary ? <Text style={styles.summary}>{summary}</Text> : null}
+      {repo.why_it_matters ? (
+        <View style={styles.whyBox}>
+          <Text style={styles.whyLabel}>为什么值得关注</Text>
+          <Text style={styles.whyText}>{repo.why_it_matters}</Text>
+        </View>
+      ) : null}
+      <Pressable
+        onPress={openGithub}
+        android_ripple={{ color: colors.overlay }}
+        style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+      >
+        <Text style={styles.buttonText}>查看 GitHub</Text>
+      </Pressable>
     </>
   );
 
@@ -64,11 +87,6 @@ const styles = StyleSheet.create({
     ...typography.subtitle,
     color: colors.text,
   },
-  description: {
-    ...typography.meta,
-    color: colors.textTertiary,
-    marginBottom: spacing.sm,
-  },
   statsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -98,6 +116,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     borderRadius: radius.sm,
     padding: spacing.sm,
+    marginBottom: spacing.sm,
   },
   whyLabel: {
     fontSize: 12,
@@ -108,6 +127,19 @@ const styles = StyleSheet.create({
   whyText: {
     fontSize: 14,
     lineHeight: 22,
+    color: colors.text,
+  },
+  button: {
+    marginTop: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  buttonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: colors.text,
   },
 });

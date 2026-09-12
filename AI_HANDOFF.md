@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 5
+Current Phase: Phase 6
 
 Completed:
 - 项目初始化
@@ -11,18 +11,18 @@ Completed:
 - OpenAI / DeepMind / Hugging Face RSS
 - 统一 RSS Collector、URL 标准化和规则去重
 - LLM 中文标题 / 摘要 / Why it matters / importance_score
-- 最近 24 小时多来源日报写入内存后通过 /api/v1/daily 提供
+- GitHub Trending 真实采集、AI 筛选、REST metadata、可选 LLM 增强
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- RSS sources -> RSSCollector -> RawArticle -> normalize -> 24h filter -> rule dedup -> LLM enrich -> in-memory DailyDigest
-- LLM 使用环境变量配置，失败回退 RSS 原文，结果缓存到 backend/.cache
-- GitHub 页面仍为 mock
+- RSS -> Collector -> 24h filter -> rule dedup -> LLM enrich -> DigestStore
+- GitHub Trending HTML -> AI filter -> GitHub REST metadata -> optional LLM enrich -> GitHubStore
+- LLM 使用环境变量配置，失败回退原文，结果缓存到 backend/.cache
 - uv + CPython 3.11
 
 Next:
-Phase 6 - GitHub Trending 或定时刷新
+Phase 7 - 定时刷新或收藏持久化
 
 Known Issues:
 - 无语义级事件聚类

@@ -32,10 +32,15 @@ class GitHubProject(BaseModel):
     description: str
     language: str
     stars: int
-    stars_delta: int
+    # Stars today from GitHub Trending HTML, not a historical snapshot delta.
+    stars_delta: int | None = None
     summary_cn: str
     why_it_matters: str
     url: str
+    rank: int | None = None
+    forks: int | None = None
+    license: str | None = None
+    topics: list[str] = Field(default_factory=list)
 
 
 class DailyDigest(BaseModel):

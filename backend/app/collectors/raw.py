@@ -12,3 +12,15 @@ class RawArticle:
     canonical_url: str
     published_at: datetime | None
     summary: str
+
+
+@dataclass(frozen=True)
+class RawTrendingRepo:
+    rank: int
+    repo: str
+    name: str
+    description: str
+    language: str
+    url: str
+    stars: int
+    stars_today: int | None

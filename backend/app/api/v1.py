@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
-from app.data.github import GITHUB_PROJECTS
 from app.models import DailyDigest, GitHubProject, NewsItem
 from app.services.digest_store import store
+from app.services.github_store import github_store
 
 router = APIRouter()
 
@@ -30,4 +30,4 @@ def get_news(news_id: str) -> NewsItem:
 
 @router.get("/github", response_model=list[GitHubProject])
 def list_github_projects() -> list[GitHubProject]:
-    return GITHUB_PROJECTS
+    return github_store.list_projects()

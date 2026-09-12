@@ -30,11 +30,15 @@ export function formatTime(value: string): string {
 export function formatStars(value: number): string {
   if (value >= 1000) {
     const compact = value / 1000;
-    return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '')}k`;
+    const digits = compact >= 100 ? 0 : 1;
+    return `${compact.toFixed(digits).replace(/\.0$/, '')}k`;
   }
   return String(value);
 }
 
-export function formatStarsDelta(value: number): string {
-  return `+${formatStars(value)}`;
+export function formatStarsDelta(value: number | null | undefined): string {
+  if (value == null) {
+    return '';
+  }
+  return `今日 +${formatStars(value)}`;
 }

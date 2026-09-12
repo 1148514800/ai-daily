@@ -6,3 +6,8 @@ class ArticleEnrichment(BaseModel):
     summary_cn: str
     why_it_matters: str = ""
     importance_score: int = Field(ge=0, le=100)
+
+
+class GitHubEnrichment(BaseModel):
+    summary_cn: str = Field(min_length=1)
+    why_it_matters: str = ""

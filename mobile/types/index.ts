@@ -22,10 +22,14 @@ export type GitHubProject = {
   description: string;
   language: string;
   stars: number;
-  stars_delta: number;
+  stars_delta: number | null;
   summary_cn: string;
   why_it_matters: string;
   url: string;
+  rank?: number | null;
+  forks?: number | null;
+  license?: string | null;
+  topics?: string[];
 };
 
 export type DailyDigest = {

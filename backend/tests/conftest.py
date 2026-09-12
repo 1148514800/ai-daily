@@ -5,6 +5,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.services.github_client import RepoMetadata
+
 FROZEN_NOW = datetime(2026, 9, 10, 20, 0, tzinfo=timezone.utc)
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -26,6 +28,11 @@ def deepmind_rss_xml() -> str:
 @pytest.fixture
 def huggingface_rss_xml() -> str:
     return read_fixture("huggingface_blog.xml")
+
+
+@pytest.fixture
+def github_trending_html() -> str:
+    return read_fixture("github_trending.html")
 
 
 def make_fixture_fetch(openai_xml: str, deepmind_xml: str, huggingface_xml: str, failing: set[str] | None = None):
@@ -50,6 +57,44 @@ def make_fixture_fetch(openai_xml: str, deepmind_xml: str, huggingface_xml: str,
     return fetch
 
 
+def fake_github_metadata(owner: str, name: str) -> RepoMetadata | None:
+    catalog = {
+        ("openai", "codex"): RepoMetadata(
+            stars=18300,
+            forks=1200,
+            language="Rust",
+            license="Apache-2.0",
+            topics=("ai", "agents"),
+            description="Codex agent",
+        ),
+        ("ggml-org", "llama.cpp"): RepoMetadata(
+            stars=87240,
+            forks=9000,
+            language="C++",
+            license="MIT",
+            topics=("llm", "inference"),
+            description="LLM inference in C/C++",
+        ),
+        ("huggingface", "transformers"): RepoMetadata(
+            stars=152300,
+            forks=31000,
+            language="Python",
+            license="Apache-2.0",
+            topics=("machine-learning", "transformer"),
+            description="Transformers",
+        ),
+        ("vercel", "next.js"): RepoMetadata(
+            stars=132000,
+            forks=28000,
+            language="JavaScript",
+            license="MIT",
+            topics=("nextjs", "react"),
+            description="The React Framework",
+        ),
+    }
+    return catalog.get((owner, name), RepoMetadata(stars=1, forks=0, language="", license="", topics=(), description=""))
+
+
 @pytest.fixture(autouse=True)
 def disable_llm_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("LLM_ENABLED", "false")
@@ -57,6 +102,26 @@ def disable_llm_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.setenv("LLM_CACHE_DIR", str(tmp_path / "llm-cache"))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def patch_github_network(request, monkeypatch: pytest.MonkeyPatch, github_trending_html: str):
+    from app.services.github_store import github_store
+
+    github_store.projects = []
+    github_store.last_error = None
+    monkeypatch.setattr(
+        "app.collectors.github_trending.fetch_trending_html",
+        lambda **kwargs: github_trending_html,
+    )
+    if "real_github_client" in request.keywords:
+        return
+
+    def fake_get_repo(self, owner: str, name: str):
+        return fake_github_metadata(owner, name)
+
+    monkeypatch.setattr("app.services.github_client.GitHubClient.get_repo", fake_get_repo)
 
 
 @pytest.fixture
