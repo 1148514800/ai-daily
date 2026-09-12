@@ -64,6 +64,8 @@ export async function getExpoPushToken(): Promise<string | null> {
     Constants?.easConfig?.projectId ??
     process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
   if (!projectId) {
+    // Explicit failure instead of generating a token against an unknown project.
+    console.warn('Expo projectId unavailable: run `npx eas init` in mobile/');
     return null;
   }
   const result = await Notifications.getExpoPushTokenAsync({ projectId });
