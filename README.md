@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 7 - Persistence / History / Favorites
+Phase 8 - Scheduled Daily Refresh
 
-今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏现在持久化在 SQLite 中，重启后仍然存在；定时任务仍未实现。
+今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端现在会在每天固定时间自动刷新，并记录每次执行结果。
 
 ## 目录结构
 
@@ -90,6 +90,7 @@ GET /api/v1/github?date={date}
 GET /api/v1/favorites
 POST /api/v1/favorites
 DELETE /api/v1/favorites/{favorite_id}
+GET /api/v1/refresh/status
 ```
 
 运行后端测试：
@@ -197,7 +198,7 @@ cd backend
 AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 ```
 
-应用启动时会 refresh 一次并写入数据库。`GET /api/v1/daily` 读取数据库中最新的日报，不会每次请求都重新访问 RSS。
+应用启动时会按需触发后台 refresh，并写入数据库。`GET /api/v1/daily` 读取数据库中最新的日报，不会每次请求都重新访问 RSS。
 
 ## 数据持久化
 
@@ -217,11 +218,69 @@ daily_digests        每天的日报（date 主键，一天一条）
 daily_digest_news    日报与新闻的排序关系
 daily_digest_github  日报与 GitHub 项目的排序关系
 favorites            收藏（item_type + item_id，单用户）
+refresh_runs         每次刷新执行记录（trigger / status / 计数 / 简短错误）
 ```
 
 同一天多次 refresh 只会更新当天日报，不会新增多条；第二天 refresh 会创建新的日报，历史保持不变。如果某次采集没有拿到任何新闻，会保留数据库中已有的当天日报，避免临时网络失败把日报清空。
 
 未来可迁移到 PostgreSQL 与多用户模型，但本阶段不实现。
+
+## 每日自动刷新
+
+后端使用进程内 APScheduler（`AsyncIOScheduler`），随 FastAPI 生命周期启动和关闭。
+
+默认行为：
+
+```text
+每天北京时间 08:00 自动执行一次 refresh
+```
+
+相关环境变量（`backend/.env.example` 有完整说明）：
+
+```bash
+SCHEDULER_ENABLED=true
+DAILY_REFRESH_HOUR=8
+DAILY_REFRESH_MINUTE=0
+APP_TIMEZONE=Asia/Shanghai
+```
+
+- `SCHEDULER_ENABLED=false` 时不注册定时任务，FastAPI API 照常工作
+- 时间与 `APP_TIMEZONE` 一起生效，不在代码里写死时区
+- 调度器只负责“到点调用”，采集逻辑仍然是 `refresh_all()` 一套
+- `coalesce=True` + `max_instances=1`，重复错过只补跑一次
+- `misfire_grace_time` 为 1 小时，短暂休眠不会直接漏掉当天任务
+
+启动补偿（catch-up）：
+
+```text
+启动时如果今天已过计划时间、且数据库里今天还没有成功刷新
+→ 后台补跑一次（trigger=startup_catchup）
+```
+
+补跑以后台任务方式触发，不会阻塞 FastAPI 启动，API 会先用数据库里已有的日报提供服务。
+
+避免重复执行：
+
+- 进程内使用互斥锁，已有 refresh 运行时第二次调用会跳过并记录日志
+- 同一天多次 refresh 只会更新当天日报，不会产生多条 `daily_digests`
+
+执行记录与状态接口：
+
+```text
+GET /api/v1/refresh/status
+```
+
+会返回 `scheduler_enabled`、`timezone`、`scheduled_time`、`last_run` 和 `next_run_at`，不包含任何 Secret。
+
+> 当前 Scheduler 只适用于本地开发与单进程部署。如果使用 `uvicorn --workers > 1`，每个 worker 都会有自己的 Scheduler，因此当前必须保持单 worker。云端生产部署会在后续阶段改用外部 Scheduler / Cron 调用统一的 refresh job，本阶段不实现分布式锁。
+
+`refresh_runs` 表记录每次执行（`manual` / `scheduled` / `startup_catchup`），只保存简短错误原因，完整 traceback 只写日志：
+
+```text
+status: running / success / failed
+```
+
+成功判定依据是日报真的写入数据库且有内容；单个 RSS 源失败不影响整体结果，全部采集失败或数据库写入失败会记录为 `failed`，且不会覆盖当天已存在的有效日报。
 
 ## Mobile 连接 Backend
 
@@ -284,7 +343,7 @@ uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 800
 - GitHub Trending：真实
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）
-- 自动定时：尚未实现
+- 自动定时：APScheduler 每日刷新 + 启动补偿（单进程内）
 
 GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。
 

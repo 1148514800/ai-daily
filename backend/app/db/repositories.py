@@ -13,6 +13,8 @@ from app.db.models import (
     FavoriteRow,
     GitHubProjectRow,
     NewsArticleRow,
+    RefreshRunRow,
+    utcnow,
 )
 from app.models import GitHubProject, NewsCategory, NewsItem
 from app.pipelines.urls import canonicalize_url
@@ -20,6 +22,15 @@ from app.pipelines.urls import canonicalize_url
 ITEM_TYPE_NEWS = "news"
 ITEM_TYPE_GITHUB = "github"
 VALID_ITEM_TYPES = (ITEM_TYPE_NEWS, ITEM_TYPE_GITHUB)
+
+TRIGGER_MANUAL = "manual"
+TRIGGER_SCHEDULED = "scheduled"
+TRIGGER_STARTUP_CATCHUP = "startup_catchup"
+VALID_TRIGGERS = (TRIGGER_MANUAL, TRIGGER_SCHEDULED, TRIGGER_STARTUP_CATCHUP)
+
+RUN_RUNNING = "running"
+RUN_SUCCESS = "success"
+RUN_FAILED = "failed"
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -329,3 +340,66 @@ class FavoriteRepository:
 
     def count(self) -> int:
         return int(self.session.scalar(select(func.count()).select_from(FavoriteRow)) or 0)
+
+
+class RefreshRunRepository:
+    """Tracks refresh attempts so failures are visible without log diving."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def start(self, trigger: str) -> RefreshRunRow:
+        row = RefreshRunRow(trigger=trigger, status=RUN_RUNNING)
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def finish(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        news_count: int = 0,
+        github_count: int = 0,
+        error: str | None = None,
+        digest_date: str | None = None,
+    ) -> RefreshRunRow | None:
+        row = self.session.get(RefreshRunRow, run_id)
+        if row is None:
+            return None
+        row.status = status
+        row.news_count = news_count
+        row.github_count = github_count
+        row.error = error
+        row.digest_date = digest_date
+        row.finished_at = utcnow()
+        self.session.flush()
+        return row
+
+    def latest(self) -> RefreshRunRow | None:
+        statement = select(RefreshRunRow).order_by(RefreshRunRow.id.desc()).limit(1)
+        return self.session.scalar(statement)
+
+    def latest_for_date(self, date: str) -> RefreshRunRow | None:
+        statement = (
+            select(RefreshRunRow)
+            .where(RefreshRunRow.digest_date == date)
+            .order_by(RefreshRunRow.id.desc())
+            .limit(1)
+        )
+        return self.session.scalar(statement)
+
+    def has_success_for_date(self, date: str) -> bool:
+        statement = (
+            select(RefreshRunRow.id)
+            .where(RefreshRunRow.digest_date == date, RefreshRunRow.status == RUN_SUCCESS)
+            .limit(1)
+        )
+        return self.session.scalar(statement) is not None
+
+    def list_recent(self, limit: int = 10) -> list[RefreshRunRow]:
+        statement = select(RefreshRunRow).order_by(RefreshRunRow.id.desc()).limit(limit)
+        return list(self.session.scalars(statement).all())
+
+    def count(self) -> int:
+        return int(self.session.scalar(select(func.count()).select_from(RefreshRunRow)) or 0)

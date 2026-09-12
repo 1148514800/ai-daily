@@ -4,6 +4,7 @@ import { formatLongDate } from '../lib/format';
 import { colors, spacing, typography } from '../theme';
 import { NewsCard } from './NewsCard';
 import { SectionHeader } from './SectionHeader';
+import { UpdateHint } from './UpdateHint';
 
 const SECTIONS: { category: NewsCategory; title: string }[] = [
   { category: 'highlight', title: '今日重点' },
@@ -28,6 +29,7 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
       <Text style={styles.title}>{digest.title}</Text>
       <Text style={styles.count}>今日精选 {digest.news.length} 条 AI 动态</Text>
       <Text style={styles.description}>{digest.description}</Text>
+      <UpdateHint />
 
       {SECTIONS.map((section) => {
         const items = digest.news.filter((item) => item.category === section.category);

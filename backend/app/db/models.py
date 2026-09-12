@@ -97,3 +97,19 @@ class FavoriteRow(Base):
     item_type: Mapped[str] = mapped_column(String(16), default="news")
     item_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RefreshRunRow(Base):
+    """One refresh attempt. Kept small: short errors only, never secrets."""
+
+    __tablename__ = "refresh_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trigger: Mapped[str] = mapped_column(String(32), default="manual")
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    digest_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    news_count: Mapped[int] = mapped_column(Integer, default=0)
+    github_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

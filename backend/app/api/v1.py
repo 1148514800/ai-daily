@@ -1,8 +1,23 @@
+from datetime import timezone
+
 from fastapi import APIRouter, HTTPException, Query
 
-from app.api.schemas import DigestSummary, FavoriteCreate, FavoriteResponse
-from app.db.repositories import VALID_ITEM_TYPES, FavoriteRepository
+from app.api.schemas import (
+    DigestSummary,
+    FavoriteCreate,
+    FavoriteResponse,
+    RefreshRunSummary,
+    RefreshStatus,
+)
+from app.config.timezone import app_timezone
+from app.db.repositories import (
+    VALID_ITEM_TYPES,
+    FavoriteRepository,
+    RefreshRunRepository,
+)
 from app.db.session import new_session
+from app.jobs.daily_refresh import is_refresh_running
+from app.jobs.scheduler import next_run_at, scheduler_state
 from app.models import DailyDigest, GitHubProject, NewsItem
 from app.services.digest_store import store
 
@@ -54,6 +69,47 @@ def list_favorites() -> list[FavoriteResponse]:
         return [_format_favorite(session, row) for row in FavoriteRepository(session).list_all()]
     finally:
         session.close()
+
+
+@router.get("/refresh/status", response_model=RefreshStatus)
+def get_refresh_status() -> RefreshStatus:
+    """Expose scheduler state so the mobile app can show the last update time."""
+    current = scheduler_state()
+    session = new_session()
+    try:
+        latest = RefreshRunRepository(session).latest()
+        finished_local = None
+        if latest is not None and latest.finished_at is not None:
+            finished = latest.finished_at
+            if finished.tzinfo is None:
+                finished = finished.replace(tzinfo=timezone.utc)
+            finished_local = finished.astimezone(app_timezone()).strftime("%H:%M")
+        last_run = (
+            RefreshRunSummary(
+                status=latest.status,
+                trigger=latest.trigger,
+                started_at=latest.started_at.isoformat() if latest.started_at else "",
+                finished_at=latest.finished_at.isoformat() if latest.finished_at else None,
+                local_time=finished_local,
+                news_count=latest.news_count,
+                github_count=latest.github_count,
+                error=latest.error,
+            )
+            if latest is not None
+            else None
+        )
+    finally:
+        session.close()
+
+    return RefreshStatus(
+        scheduler_enabled=current.enabled,
+        scheduler_running=current.running,
+        timezone=current.timezone,
+        scheduled_time=current.scheduled_time,
+        is_running=is_refresh_running(),
+        last_run=last_run,
+        next_run_at=next_run_at(),
+    )
 
 
 @router.post("/favorites", response_model=FavoriteResponse, status_code=201)

@@ -56,4 +56,25 @@ export type Favorite = {
   item: NewsItem | GitHubProject;
 };
 
+export type RefreshRunSummary = {
+  status: string;
+  trigger: string;
+  started_at: string;
+  finished_at: string | null;
+  local_time: string | null;
+  news_count: number;
+  github_count: number;
+  error: string | null;
+};
+
+export type RefreshStatus = {
+  scheduler_enabled: boolean;
+  scheduler_running: boolean;
+  timezone: string;
+  scheduled_time: string;
+  is_running: boolean;
+  last_run: RefreshRunSummary | null;
+  next_run_at: string | null;
+};
+
 export type TabKey = 'today' | 'github' | 'favorites' | 'history';

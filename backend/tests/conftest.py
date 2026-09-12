@@ -121,6 +121,15 @@ def disable_llm_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 @pytest.fixture(autouse=True)
+def disable_scheduler_by_default(monkeypatch: pytest.MonkeyPatch):
+    """Tests drive refreshes explicitly instead of waiting for real clock time."""
+    monkeypatch.setenv("SCHEDULER_ENABLED", "false")
+    monkeypatch.setenv("DAILY_REFRESH_HOUR", "8")
+    monkeypatch.setenv("DAILY_REFRESH_MINUTE", "0")
+    monkeypatch.setenv("APP_TIMEZONE", "Asia/Shanghai")
+
+
+@pytest.fixture(autouse=True)
 def patch_github_network(request, monkeypatch: pytest.MonkeyPatch, github_trending_html: str):
     from app.services.github_store import github_store
 
@@ -150,7 +159,10 @@ def patch_rss_feeds(monkeypatch: pytest.MonkeyPatch, openai_rss_xml: str, deepmi
 
 @pytest.fixture
 def client(patch_rss_feeds):
+    """API client backed by a database refreshed exactly once at fixture setup."""
     from app.main import app
+    from app.services.refresh_service import refresh_all
 
+    refresh_all(now=FROZEN_NOW)
     with TestClient(app) as test_client:
         yield test_client

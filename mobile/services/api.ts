@@ -5,6 +5,7 @@ import type {
   FavoriteItemType,
   GitHubProject,
   NewsItem,
+  RefreshStatus,
 } from '../types';
 import { API_BASE_URL } from './config';
 
@@ -90,4 +91,8 @@ export function deleteFavorite(favoriteId: number): Promise<void> {
     method: 'DELETE',
     fallbackMessage: '取消收藏失败',
   });
+}
+
+export function fetchRefreshStatus(): Promise<RefreshStatus> {
+  return request<RefreshStatus>('/api/v1/refresh/status');
 }

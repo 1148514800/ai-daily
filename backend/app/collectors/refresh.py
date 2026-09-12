@@ -4,9 +4,9 @@ import os
 import sys
 
 from app.db.session import init_db
+from app.jobs.daily_refresh import run_manual_refresh
 from app.services.digest_store import store
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
-from app.services.refresh_service import refresh_all
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
 
@@ -76,7 +76,17 @@ def main() -> None:
     _configure_stdout()
     debug = _debug_enabled()
     init_db()
-    combined = refresh_all()
+    outcome = run_manual_refresh()
+    combined = outcome.combined
+    if combined is None:
+        print("Refresh did not complete")
+        print(f"Status: {outcome.status}")
+        if outcome.error:
+            print(f"Error: {outcome.error}")
+        return
+    print(f"Trigger: {outcome.trigger}")
+    print(f"Status: {outcome.status}")
+    print()
     reports = combined.reports
     github_stats: GitHubRefreshStats = combined.github_stats
     article_stats = store.last_llm_stats

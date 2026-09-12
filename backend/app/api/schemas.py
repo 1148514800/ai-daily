@@ -30,3 +30,25 @@ class FavoriteResponse(BaseModel):
     item_type: str
     created_at: str
     item: NewsItem | GitHubProject
+
+
+class RefreshRunSummary(BaseModel):
+    status: str
+    trigger: str
+    started_at: str
+    finished_at: str | None
+    # Preformatted in APP_TIMEZONE so the client never has to guess a timezone.
+    local_time: str | None = None
+    news_count: int
+    github_count: int
+    error: str | None = None
+
+
+class RefreshStatus(BaseModel):
+    scheduler_enabled: bool
+    scheduler_running: bool
+    timezone: str
+    scheduled_time: str
+    is_running: bool
+    last_run: RefreshRunSummary | None = None
+    next_run_at: str | None = None
