@@ -1,6 +1,7 @@
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BackHeader } from '../components/BackHeader';
 import { Chip } from '../components/Chip';
+import { FavoriteButton } from '../components/FavoriteButton';
 import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
 import { useAsyncResource } from '../hooks/useAsyncResource';
@@ -65,6 +66,10 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
               </View>
             ) : null}
 
+            <View style={styles.actions}>
+              <FavoriteButton itemType="news" itemId={data.id} />
+            </View>
+
             <Pressable
               onPress={openOriginal}
               android_ripple={{ color: colors.overlay }}
@@ -122,8 +127,11 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: spacing.lg,
   },
+  actions: {
+    marginTop: spacing.lg,
+  },
   button: {
-    marginTop: spacing.xl,
+    marginTop: spacing.md,
     backgroundColor: colors.text,
     borderRadius: radius.md,
     paddingVertical: 14,

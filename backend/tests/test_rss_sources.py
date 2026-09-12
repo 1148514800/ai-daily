@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 
 import httpx
-from app.collectors.rss import collect_all_sources, collect_source, parse_feed
+from app.collectors.rss import collect_all_sources, parse_feed
 from app.config.sources import source_by_id
 from app.services.digest_store import DigestStore
-from tests.conftest import make_fixture_fetch
+from tests.conftest import FROZEN_DIGEST_DATE, make_fixture_fetch
 
 FROZEN_NOW = datetime(2026, 9, 10, 20, 0, tzinfo=timezone.utc)
 
@@ -73,4 +73,4 @@ def test_store_empty_when_all_old() -> None:
     store.refresh(now=FROZEN_NOW, fetch_text=lambda url, timeout=10.0: xml)
     digest = store.get_today()
     assert digest.news == []
-    assert digest.date == "2026-09-10"
+    assert digest.date == FROZEN_DIGEST_DATE

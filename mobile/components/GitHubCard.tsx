@@ -1,5 +1,6 @@
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { GitHubProject } from '../types';
+import { FavoriteButton } from './FavoriteButton';
 import { formatStars, formatStarsDelta } from '../lib/format';
 import { colors, radius, spacing, typography } from '../theme';
 
@@ -43,6 +44,9 @@ export function GitHubCard({ repo, onPress }: GitHubCardProps) {
           <Text style={styles.whyText}>{repo.why_it_matters}</Text>
         </View>
       ) : null}
+      <View style={styles.actions}>
+        <FavoriteButton itemType="github" itemId={repo.id} />
+      </View>
       <Pressable
         onPress={openGithub}
         android_ripple={{ color: colors.overlay }}
@@ -129,8 +133,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: colors.text,
   },
+  actions: {
+    marginBottom: spacing.sm,
+  },
   button: {
-    marginTop: spacing.sm,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.border,

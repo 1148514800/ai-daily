@@ -2,12 +2,18 @@ import logging
 from datetime import datetime, timezone
 
 from app.collectors.rss import CollectResult, article_within_last_hours, collect_all_sources
-from app.models import DailyDigest, NewsItem
+from app.config.timezone import digest_date_for, today_digest_date
+from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
+from app.db.session import new_session
+from app.models import DailyDigest, GitHubProject, NewsItem
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.normalize import news_item_from_raw
 from app.services.llm import EnrichmentStats, enrich_articles
 
 logger = logging.getLogger(__name__)
+
+DIGEST_TITLE = "今日 AI 日报"
+EMPTY_DESCRIPTION = "今天还没有新的 AI 资讯。"
 
 
 def now_utc() -> datetime:
@@ -17,27 +23,39 @@ def now_utc() -> datetime:
 def empty_digest(date: str) -> DailyDigest:
     return DailyDigest(
         date=date,
-        title="今日 AI 日报",
-        description="今天还没有新的 AI 资讯。",
+        title=DIGEST_TITLE,
+        description=EMPTY_DESCRIPTION,
         news=[],
         github_projects=[],
     )
 
 
 class DigestStore:
+    """Collects, enriches, and persists the daily digest.
+
+    The database is the source of truth: reads always come from SQLite, so a
+    restart keeps previous digests and in-memory state stays tiny.
+    """
+
     def __init__(self) -> None:
-        self.digest: DailyDigest | None = None
-        self.news_by_id: dict[str, NewsItem] = {}
         self.last_error: str | None = None
         self.last_reports: list[CollectResult] = []
         self.last_recent_count: int = 0
         self.last_llm_stats: EnrichmentStats = EnrichmentStats()
+        self.last_saved_date: str | None = None
+        self.last_news_count: int = 0
+        self.last_github_count: int = 0
+        self.last_kept_previous: bool = False
 
-    def refresh(self, now: datetime | None = None, fetch_text=None) -> list[CollectResult]:
+    def collect_news(
+        self,
+        now: datetime | None = None,
+        fetch_text=None,
+    ) -> tuple[list[NewsItem], list[CollectResult]]:
+        """Collect, filter, dedupe, and enrich news. Does not touch the database."""
         current = now or now_utc()
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
-        date = current.date().isoformat()
 
         reports = collect_all_sources(fetch_text=fetch_text)
         self.last_reports = reports
@@ -74,46 +92,161 @@ class DigestStore:
             )
         self.last_llm_stats = llm_stats
         logger.info(
-            "llm candidates=%s calls=%s cache_hits=%s success=%s fallback=%s failed=%s input_tokens=%s output_tokens=%s",
+            "llm candidates=%s calls=%s cache_hits=%s success=%s fallback=%s failed=%s",
             llm_stats.candidates,
             llm_stats.llm_calls,
             llm_stats.cache_hits,
             llm_stats.success,
             llm_stats.fallback,
             llm_stats.failed,
-            llm_stats.input_tokens,
-            llm_stats.output_tokens,
         )
+        return news_items, reports
 
-        sources = sorted({item.source for item in news_items})
-        if news_items:
-            description = f"来自 {'、'.join(sources)} 的 {len(news_items)} 条更新。"
-        else:
-            description = "今天还没有新的 AI 资讯。"
+    def refresh(
+        self,
+        now: datetime | None = None,
+        fetch_text=None,
+        github_projects: list[GitHubProject] | None = None,
+    ) -> list[CollectResult]:
+        """Collect news and persist the day's digest."""
+        current = now or now_utc()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        date = digest_date_for(current)
 
-        self.news_by_id = {item.id: item for item in news_items}
-        self.digest = DailyDigest(
-            date=date,
-            title="今日 AI 日报",
-            description=description,
-            news=news_items,
-            github_projects=[],
-        )
+        news_items, reports = self.collect_news(current, fetch_text)
+        self.persist(date=date, news_items=news_items, github_projects=github_projects)
         return reports
 
+    def persist(
+        self,
+        *,
+        date: str,
+        news_items: list[NewsItem],
+        github_projects: list[GitHubProject] | None,
+    ) -> bool:
+        """Write news, GitHub projects, and the digest in one transaction.
+
+        Returns False when an existing digest was kept because this refresh
+        produced no news, so a temporary collector outage never erases a good
+        digest. Any error rolls the whole write back.
+        """
+        session = new_session()
+        try:
+            if not news_items and DigestRepository(session).exists(date):
+                session.rollback()
+                self.last_kept_previous = True
+                self.last_saved_date = None
+                self.last_news_count = 0
+                self.last_github_count = 0
+                logger.warning("refresh produced no news; keeping existing digest date=%s", date)
+                return False
+
+            NewsRepository(session).upsert_many(news_items)
+            projects = github_projects or []
+            repository = DigestRepository(session)
+            if projects:
+                GitHubRepository(session).upsert_many(projects)
+                github_ids = [project.id for project in projects]
+            else:
+                # A failed trending fetch must not erase projects already linked
+                # to the day. Only a non-empty result replaces the ordering.
+                github_ids = repository.get_github_ids(date)
+
+            sources = sorted({item.source for item in news_items})
+            description = (
+                f"来自 {'、'.join(sources)} 的 {len(news_items)} 条更新。"
+                if news_items
+                else EMPTY_DESCRIPTION
+            )
+            repository.save(
+                date=date,
+                title=DIGEST_TITLE,
+                description=description,
+                news_ids=[item.id for item in news_items],
+                github_ids=github_ids,
+            )
+            session.commit()
+            self.last_kept_previous = False
+            self.last_saved_date = date
+            self.last_news_count = len(news_items)
+            self.last_github_count = len(github_ids)
+            return True
+        except Exception:
+            session.rollback()
+            logger.exception("persisting digest failed date=%s", date)
+            raise
+        finally:
+            session.close()
+
+    def latest_date(self) -> str | None:
+        session = new_session()
+        try:
+            return DigestRepository(session).latest_date()
+        finally:
+            session.close()
+
     def get_today(self) -> DailyDigest:
-        if self.digest is None:
-            return empty_digest(now_utc().date().isoformat())
-        return self.digest
+        """Return the latest stored digest, or an empty digest for today."""
+        return self.get_digest(self.latest_date() or today_digest_date())
+
+    def get_digest(self, date: str) -> DailyDigest:
+        session = new_session()
+        try:
+            repository = DigestRepository(session)
+            meta = repository.get_meta(date)
+            if meta is None:
+                return empty_digest(date)
+            return DailyDigest(
+                date=date,
+                title=meta[0],
+                description=meta[1],
+                news=repository.get_news(date),
+                github_projects=repository.get_github(date),
+            )
+        finally:
+            session.close()
 
     def get_by_date(self, date: str) -> DailyDigest | None:
-        digest = self.get_today()
-        if digest.date == date:
-            return digest
-        return None
+        session = new_session()
+        try:
+            if not DigestRepository(session).exists(date):
+                return None
+        finally:
+            session.close()
+        return self.get_digest(date)
+
+    def get_github_projects(self, date: str) -> list[GitHubProject]:
+        session = new_session()
+        try:
+            return DigestRepository(session).get_github(date)
+        finally:
+            session.close()
 
     def get_news(self, news_id: str) -> NewsItem | None:
-        return self.news_by_id.get(news_id)
+        session = new_session()
+        try:
+            return NewsRepository(session).get(news_id)
+        finally:
+            session.close()
+
+    def list_digest_summaries(self) -> list[tuple[str, str, int, int]]:
+        session = new_session()
+        try:
+            return DigestRepository(session).list_summaries()
+        finally:
+            session.close()
+
+    def stats(self) -> tuple[int, int, int]:
+        session = new_session()
+        try:
+            return (
+                DigestRepository(session).count(),
+                NewsRepository(session).count(),
+                GitHubRepository(session).count(),
+            )
+        finally:
+            session.close()
 
 
 store = DigestStore()

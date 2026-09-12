@@ -3,34 +3,15 @@ import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
 import { useAsyncResource } from '../hooks/useAsyncResource';
 import { formatLongDate } from '../lib/format';
-import { ApiError, fetchDailyByDate, fetchTodayDaily, previousDates } from '../services/api';
+import { fetchDigests } from '../services/api';
 import { colors, radius, spacing, typography } from '../theme';
-import type { DailyDigest } from '../types';
 
 type HistoryScreenProps = {
   onOpenDigest: (date: string) => void;
 };
 
-async function fetchHistoryDigests(): Promise<DailyDigest[]> {
-  const today = await fetchTodayDaily();
-  const dates = previousDates(today.date, 3);
-  const results = await Promise.all(
-    dates.map(async (date) => {
-      try {
-        return await fetchDailyByDate(date);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
-          return null;
-        }
-        throw error;
-      }
-    }),
-  );
-  return results.filter((item): item is DailyDigest => item !== null);
-}
-
 export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
-  const { status, data, reload } = useAsyncResource(fetchHistoryDigests);
+  const { status, data, reload } = useAsyncResource(fetchDigests);
 
   return (
     <Screen>
@@ -57,9 +38,8 @@ export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
               >
                 <Text style={styles.date}>{formatLongDate(digest.date)}</Text>
                 <Text style={styles.cardTitle}>{digest.title}</Text>
-                <Text style={styles.caption}>精选 {digest.news.length} 条动态</Text>
-                <Text style={styles.highlight} numberOfLines={2}>
-                  {digest.description}
+                <Text style={styles.caption}>
+                  精选 {digest.news_count} 条动态 · GitHub {digest.github_count} 个
                 </Text>
               </Pressable>
             ))}
@@ -115,11 +95,5 @@ const styles = StyleSheet.create({
     ...typography.meta,
     color: colors.textSecondary,
     marginTop: 6,
-  },
-  highlight: {
-    fontSize: 15,
-    lineHeight: 24,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
   },
 });

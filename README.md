@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 6.1 - GitHub AI Filtering
+Phase 7 - Persistence / History / Favorites
 
-今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。数据目前保存在内存中，尚未做数据库或定时任务。
+今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏现在持久化在 SQLite 中，重启后仍然存在；定时任务仍未实现。
 
 ## 目录结构
 
@@ -82,9 +82,14 @@ http://127.0.0.1:8000/docs
 ```text
 GET /health
 GET /api/v1/daily
+GET /api/v1/digests
 GET /api/v1/daily/{date}
 GET /api/v1/news/{news_id}
 GET /api/v1/github
+GET /api/v1/github?date={date}
+GET /api/v1/favorites
+POST /api/v1/favorites
+DELETE /api/v1/favorites/{favorite_id}
 ```
 
 运行后端测试：
@@ -134,7 +139,7 @@ cd backend
 uv run python -m app.collectors.refresh
 ```
 
-会打印每个来源的抓取数量，以及：
+会打印每个来源的抓取数量、GitHub 筛选结果，以及数据库写入情况：
 
 ```text
 Total:
@@ -150,6 +155,15 @@ Cache hit: X
 Fallback: X
 Failed: X
 [92] OpenAI | title_cn
+
+Digest saved: 2026-09-12
+News: 3
+GitHub: 1
+
+Database
+Daily digests: 1
+News total: 3
+GitHub repos total: 1
 ```
 
 GitHub 部分会打印筛选结果，默认只显示入选项目和拒绝数量：
@@ -183,7 +197,31 @@ cd backend
 AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 ```
 
-应用启动时会 refresh 一次。`GET /api/v1/daily` 读取内存中的日报，不会每次请求都重新访问 RSS。
+应用启动时会 refresh 一次并写入数据库。`GET /api/v1/daily` 读取数据库中最新的日报，不会每次请求都重新访问 RSS。
+
+## 数据持久化
+
+- 当前使用 SQLite + SQLAlchemy 2.x，适合个人单用户场景
+- 数据库文件：`backend/data/ai_daily.db`（`backend/data/` 已加入 `.gitignore`，不会提交）
+- 连接串由环境变量 `DATABASE_URL` 控制，默认 `sqlite:///./data/ai_daily.db`
+- 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
+- 日报日期由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间仍以 UTC 保存
+- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化
+
+存储内容：
+
+```text
+news_articles        新闻正文与元数据（稳定 ID upsert）
+github_projects      GitHub 项目（repo 稳定 ID upsert）
+daily_digests        每天的日报（date 主键，一天一条）
+daily_digest_news    日报与新闻的排序关系
+daily_digest_github  日报与 GitHub 项目的排序关系
+favorites            收藏（item_type + item_id，单用户）
+```
+
+同一天多次 refresh 只会更新当天日报，不会新增多条；第二天 refresh 会创建新的日报，历史保持不变。如果某次采集没有拿到任何新闻，会保留数据库中已有的当天日报，避免临时网络失败把日报清空。
+
+未来可迁移到 PostgreSQL 与多用户模型，但本阶段不实现。
 
 ## Mobile 连接 Backend
 
@@ -245,7 +283,7 @@ uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1 --port 800
 - RSS：真实
 - GitHub Trending：真实
 - LLM：可选
-- 数据存储：当前内存
+- 数据存储：SQLite（`backend/data/ai_daily.db`）
 - 自动定时：尚未实现
 
 GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。

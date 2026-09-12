@@ -1,4 +1,11 @@
-import type { DailyDigest, GitHubProject, NewsItem } from '../types';
+import type {
+  DailyDigest,
+  DigestSummary,
+  Favorite,
+  FavoriteItemType,
+  GitHubProject,
+  NewsItem,
+} from '../types';
 import { API_BASE_URL } from './config';
 
 export class ApiError extends Error {
@@ -11,16 +18,32 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string): Promise<T> {
+type RequestOptions = {
+  method?: 'GET' | 'POST' | 'DELETE';
+  body?: unknown;
+  fallbackMessage?: string;
+};
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { method = 'GET', body, fallbackMessage = '内容加载失败' } = options;
+
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`);
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   } catch {
-    throw new ApiError('网络连接失败', 0);
+    throw new ApiError('网络连接失败，请检查后端是否已启动', 0);
   }
 
   if (!response.ok) {
-    throw new ApiError('内容加载失败', response.status);
+    throw new ApiError(fallbackMessage, response.status);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return (await response.json()) as T;
@@ -34,26 +57,37 @@ export function fetchDailyByDate(date: string): Promise<DailyDigest> {
   return request<DailyDigest>(`/api/v1/daily/${date}`);
 }
 
+export function fetchDigests(): Promise<DigestSummary[]> {
+  return request<DigestSummary[]>('/api/v1/digests');
+}
+
 export function fetchNews(newsId: string): Promise<NewsItem> {
   return request<NewsItem>(`/api/v1/news/${encodeURIComponent(newsId)}`);
 }
 
-export function fetchGithubProjects(): Promise<GitHubProject[]> {
-  return request<GitHubProject[]>('/api/v1/github');
+export function fetchGithubProjects(date?: string): Promise<GitHubProject[]> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  return request<GitHubProject[]>(`/api/v1/github${query}`);
 }
 
-export function previousDates(today: string, count: number): string[] {
-  const [year, month, day] = today.split('-').map(Number);
-  const cursor = new Date(year, month - 1, day);
-  const dates: string[] = [];
+export function fetchFavorites(): Promise<Favorite[]> {
+  return request<Favorite[]>('/api/v1/favorites');
+}
 
-  for (let index = 0; index < count; index += 1) {
-    cursor.setDate(cursor.getDate() - 1);
-    const nextYear = cursor.getFullYear();
-    const nextMonth = String(cursor.getMonth() + 1).padStart(2, '0');
-    const nextDay = String(cursor.getDate()).padStart(2, '0');
-    dates.push(`${nextYear}-${nextMonth}-${nextDay}`);
-  }
+export function addFavorite(
+  itemType: FavoriteItemType,
+  itemId: string,
+): Promise<Favorite> {
+  return request<Favorite>('/api/v1/favorites', {
+    method: 'POST',
+    body: { item_type: itemType, item_id: itemId },
+    fallbackMessage: '收藏失败',
+  });
+}
 
-  return dates;
+export function deleteFavorite(favoriteId: number): Promise<void> {
+  return request<void>(`/api/v1/favorites/${favoriteId}`, {
+    method: 'DELETE',
+    fallbackMessage: '取消收藏失败',
+  });
 }

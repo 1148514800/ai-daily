@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 import sys
 
+from app.db.session import init_db
 from app.services.digest_store import store
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
+from app.services.refresh_service import refresh_all
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
 
@@ -73,11 +75,14 @@ def print_github_filtering(decisions: list[RepoDecision], *, debug: bool = False
 def main() -> None:
     _configure_stdout()
     debug = _debug_enabled()
-    reports = store.refresh()
-    github_stats: GitHubRefreshStats = github_store.refresh()
+    init_db()
+    combined = refresh_all()
+    reports = combined.reports
+    github_stats: GitHubRefreshStats = combined.github_stats
+    article_stats = store.last_llm_stats
+    failed: list[str] = []
 
     print("RSS")
-    failed: list[str] = []
     for report in reports:
         print(f"{report.source_name}:")
         print(f"Fetched: {report.fetched}")
@@ -88,7 +93,6 @@ def main() -> None:
             failed.append(report.source_name)
         print()
 
-    article_stats = store.last_llm_stats
     print(f"Candidates: {article_stats.candidates}")
     print(f"After dedup: {article_stats.candidates}")
     if failed:
@@ -109,33 +113,30 @@ def main() -> None:
 
     print_github_filtering(github_stats.decisions, debug=debug)
 
-    print("Final projects")
-    for index, project in enumerate(github_store.list_projects(), start=1):
-        rank = project.rank if project.rank is not None else "-"
-        delta = project.stars_delta if project.stars_delta is not None else "-"
-        print(f"#{index} (trending #{rank}) {project.repo}")
-        print(f"  stars={project.stars} today={delta}")
-        print(f"  {project.summary_cn}")
+    if combined.saved:
+        print(f"Digest saved: {combined.date}")
+        print(f"News: {store.last_news_count}")
+        print(f"GitHub: {store.last_github_count}")
+    else:
+        print(f"Kept existing digest: {combined.date}")
     print()
 
-    print("GitHub API")
-    remaining = github_stats.rate_limit_remaining
-    print(f"Remaining: {remaining if remaining is not None else 'unknown'}")
+    digests, news_total, github_total = store.stats()
+    print("Database")
+    print(f"Daily digests: {digests}")
+    print(f"News total: {news_total}")
+    print(f"GitHub repos total: {github_total}")
     print()
 
-    gh_llm = github_stats.llm_stats
-    print("LLM")
-    print(f"Article success: {article_stats.success}")
-    print(f"GitHub success: {gh_llm.success}")
-    print(f"Cache hit: {article_stats.cache_hits + gh_llm.cache_hits}")
-    print(f"Fallback: {article_stats.fallback + gh_llm.fallback}")
-    print()
-
-    digest = store.get_today()
+    digest = store.get_digest(combined.date)
     for item in digest.news[:8]:
         score = item.importance_score
         label = f"{score:02d}" if score is not None else "--"
         print(f"[{label}] {item.source} | {item.title_cn}")
+    print()
+    for index, project in enumerate(digest.github_projects, start=1):
+        delta = project.stars_delta if project.stars_delta is not None else "-"
+        print(f"#{index} {project.repo} stars={project.stars} today={delta} | {project.summary_cn}")
 
 
 if __name__ == "__main__":

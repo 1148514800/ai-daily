@@ -5,9 +5,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db.session import configure_database, init_db, reset_database
 from app.services.github_client import RepoMetadata
 
+# 2026-09-10 20:00 UTC is 2026-09-11 04:00 in Asia/Shanghai, which keeps the
+# 24h collector window stable while exercising timezone-aware digest dates.
 FROZEN_NOW = datetime(2026, 9, 10, 20, 0, tzinfo=timezone.utc)
+FROZEN_DIGEST_DATE = "2026-09-11"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -96,6 +100,17 @@ def fake_github_metadata(owner: str, name: str) -> RepoMetadata | None:
 
 
 @pytest.fixture(autouse=True)
+def use_temp_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Every test runs against a throwaway SQLite file, never the real one."""
+    db_path = tmp_path / "test_ai_daily.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    configure_database(f"sqlite:///{db_path.as_posix()}")
+    init_db()
+    yield
+    reset_database()
+
+
+@pytest.fixture(autouse=True)
 def disable_llm_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("LLM_ENABLED", "false")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
@@ -129,6 +144,7 @@ def patch_rss_feeds(monkeypatch: pytest.MonkeyPatch, openai_rss_xml: str, deepmi
     fetch = make_fixture_fetch(openai_rss_xml, deepmind_rss_xml, huggingface_rss_xml)
     monkeypatch.setattr("app.collectors.rss.fetch_rss_text", fetch)
     monkeypatch.setattr("app.services.digest_store.now_utc", lambda: FROZEN_NOW)
+    monkeypatch.setattr("app.services.refresh_service.now_utc", lambda: FROZEN_NOW, raising=False)
     return fetch
 
 

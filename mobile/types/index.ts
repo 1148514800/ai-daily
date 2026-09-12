@@ -40,4 +40,20 @@ export type DailyDigest = {
   github_projects: GitHubProject[];
 };
 
+export type DigestSummary = {
+  date: string;
+  title: string;
+  news_count: number;
+  github_count: number;
+};
+
+export type FavoriteItemType = 'news' | 'github';
+
+export type Favorite = {
+  id: number;
+  item_type: FavoriteItemType;
+  created_at: string;
+  item: NewsItem | GitHubProject;
+};
+
 export type TabKey = 'today' | 'github' | 'favorites' | 'history';
