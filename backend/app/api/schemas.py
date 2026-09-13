@@ -4,10 +4,24 @@ from app.models import GitHubProject, NewsItem
 
 
 class DigestSummary(BaseModel):
+    """One row of the history list.
+
+    Deliberately counts only: the history screen needs to know a day exists and
+    how big it was, never what was in it. Shipping the stories here would make
+    the list as heavy as opening every digest at once.
+    """
+
     date: str
     title: str
     news_count: int
     github_count: int
+    # How many of ``news_count`` the digest calls out as top stories, so the list
+    # can say "10 条重点" without loading the digest.
+    top_story_count: int
+    # The UTC issue window the digest covers, for debugging and for a client that
+    # wants to know why two days do not overlap. Null for a pre-window digest.
+    window_start: str | None = None
+    window_end: str | None = None
 
 
 class FavoriteCreate(BaseModel):

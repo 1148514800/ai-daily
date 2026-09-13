@@ -16,6 +16,12 @@ export function formatShortDate(value: string): string {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
+/** ``9月12日 周六`` — the short date plus its weekday, for the history list. */
+export function formatShortDateWithWeekday(value: string): string {
+  const date = parseISODate(value);
+  return `${formatShortDate(value)} 周${WEEKDAYS[date.getDay()]}`;
+}
+
 export function formatTime(value: string): string {
   const isoMatch = value.match(/T(\d{2}:\d{2})/);
   if (isoMatch) {

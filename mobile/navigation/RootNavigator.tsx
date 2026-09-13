@@ -29,6 +29,18 @@ export function RootNavigator() {
     setStack((routes) => (routes.length > 1 ? routes.slice(0, -1) : routes));
   }
 
+  /**
+   * Step to another digest in place.
+   *
+   * Replacing the top route rather than pushing keeps Back meaning "leave the
+   * digest", so stepping through five days does not bury the caller under five
+   * screens. The date is the route key, so the screen re-mounts with the new
+   * date and its own fetch.
+   */
+  function replaceDigest(date: string) {
+    setStack((routes) => [...routes.slice(0, -1), { name: 'digest', date }]);
+  }
+
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (stack.length > 1) {
@@ -46,9 +58,11 @@ export function RootNavigator() {
   } else if (current.name === 'digest') {
     screen = (
       <DigestScreen
+        key={current.date}
         date={current.date}
         onBack={pop}
         onOpenNews={(id) => push({ name: 'news', id })}
+        onOpenDigest={(date) => replaceDigest(date)}
       />
     );
   } else if (tab === 'github') {
@@ -60,7 +74,12 @@ export function RootNavigator() {
   } else if (tab === 'settings') {
     screen = <SettingsScreen />;
   } else {
-    screen = <TodayScreen onOpenNews={(id) => push({ name: 'news', id })} />;
+    screen = (
+      <TodayScreen
+        onOpenNews={(id) => push({ name: 'news', id })}
+        onOpenHistory={() => setTab('history')}
+      />
+    );
   }
 
   return (

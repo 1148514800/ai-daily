@@ -119,12 +119,25 @@ def test_list_digests(client) -> None:
     payload = response.json()
     assert len(payload) == 1
     summary = payload[0]
-    assert summary == {
-        "date": FROZEN_DIGEST_DATE,
-        "title": "今日 AI 日报",
-        "news_count": 6,
-        "github_count": 3,
-    }
+    assert summary["date"] == FROZEN_DIGEST_DATE
+    assert summary["title"] == "今日 AI 日报"
+    assert summary["news_count"] == 6
+    assert summary["github_count"] == 3
+    # The history list needs enough to describe a day without opening it, and
+    # no article bodies at all.
+    assert summary["top_story_count"] == 6
+    # First digest has no predecessor, so its window is the last 24h before now.
+    assert summary["window_start"] == "2026-09-09T20:00:00+00:00"
+    assert summary["window_end"] == "2026-09-10T20:00:00+00:00"
+
+
+def test_list_digests_is_lightweight(client) -> None:
+    """The history list must never carry the stories themselves."""
+    summary = client.get("/api/v1/digests").json()[0]
+
+    assert "news" not in summary
+    assert "github_projects" not in summary
+    assert "content_original" not in summary
 
 
 

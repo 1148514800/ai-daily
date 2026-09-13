@@ -212,8 +212,8 @@ def test_history_list_is_date_desc() -> None:
         repository.save(date="2026-09-11", title="d2", description="b", news_ids=["rss-0001", "rss-0002"], github_ids=[])
         session.commit()
         summaries = repository.list_summaries()
-        assert [item[0] for item in summaries] == ["2026-09-12", "2026-09-11", "2026-09-10"]
-        assert summaries[1][2] == 2
+        assert [item.date for item in summaries] == ["2026-09-12", "2026-09-11", "2026-09-10"]
+        assert summaries[1].news_count == 2
     finally:
         session.close()
 
@@ -391,7 +391,7 @@ def test_refresh_second_day_creates_new_digest() -> None:
     assert DigestStore().refresh(now=day_one, fetch_text=day_one_fetch)
     assert DigestStore().refresh(now=day_two, fetch_text=day_two_fetch)
 
-    summaries = [row[0] for row in store.list_digest_summaries()]
+    summaries = [row.date for row in store.list_digest_summaries()]
     assert summaries == ["2026-09-12", "2026-09-11"]
     assert store.get_digest("2026-09-11").news
     assert store.get_digest("2026-09-12").news

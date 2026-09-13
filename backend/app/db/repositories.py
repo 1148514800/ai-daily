@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TypeVar
 
@@ -42,6 +43,25 @@ RUN_FAILED = "failed"
 
 PLATFORM_ANDROID = "android"
 VALID_PLATFORMS = (PLATFORM_ANDROID, "ios")
+
+
+@dataclass(frozen=True)
+class DigestSummaryData:
+    """What the history list needs to know about one digest.
+
+    Counts only, never content: the list has to stay cheap however many days the
+    database holds. The window is carried along because it is already stored on
+    the row and answers "why is this day separate from that one" without a second
+    query for the digest itself.
+    """
+
+    date: str
+    title: str
+    news_count: int
+    github_count: int
+    top_story_count: int
+    window_start: datetime | None
+    window_end: datetime | None
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -545,29 +565,41 @@ class DigestRepository:
     def latest_date(self) -> str | None:
         return self.session.scalar(select(func.max(DailyDigestRow.date)))
 
-    def list_summaries(self) -> list[tuple[str, str, int, int]]:
-        """Return (date, title, news_count, github_count) ordered by date DESC."""
+    def list_summaries(self) -> list[DigestSummaryData]:
+        """Every stored digest, newest first, as counts plus its window.
+
+        The top-story count is derived from the same limit ``get_news`` uses, so
+        the history list and the digest it opens always agree on how many
+        stories were called out.
+        """
+        limit = top_story_limit()
+        news_counts = dict(
+            self.session.execute(
+                select(DailyDigestNewsRow.digest_date, func.count())
+                .group_by(DailyDigestNewsRow.digest_date)
+            ).all()
+        )
+        github_counts = dict(
+            self.session.execute(
+                select(DailyDigestGitHubRow.digest_date, func.count())
+                .group_by(DailyDigestGitHubRow.digest_date)
+            ).all()
+        )
         statement = select(DailyDigestRow).order_by(DailyDigestRow.date.desc())
-        rows = self.session.scalars(statement).all()
-        summaries: list[tuple[str, str, int, int]] = []
-        for row in rows:
-            news_count = int(
-                self.session.scalar(
-                    select(func.count())
-                    .select_from(DailyDigestNewsRow)
-                    .where(DailyDigestNewsRow.digest_date == row.date)
+        summaries: list[DigestSummaryData] = []
+        for row in self.session.scalars(statement).all():
+            news_count = int(news_counts.get(row.date, 0) or 0)
+            summaries.append(
+                DigestSummaryData(
+                    date=row.date,
+                    title=row.title or "",
+                    news_count=news_count,
+                    github_count=int(github_counts.get(row.date, 0) or 0),
+                    top_story_count=min(news_count, limit),
+                    window_start=_as_utc(row.window_start),
+                    window_end=_as_utc(row.window_end),
                 )
-                or 0
             )
-            github_count = int(
-                self.session.scalar(
-                    select(func.count())
-                    .select_from(DailyDigestGitHubRow)
-                    .where(DailyDigestGitHubRow.digest_date == row.date)
-                )
-                or 0
-            )
-            summaries.append((row.date, row.title, news_count, github_count))
         return summaries
 
     def count(self) -> int:

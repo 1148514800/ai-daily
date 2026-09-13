@@ -1,4 +1,4 @@
-from datetime import timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
@@ -45,9 +45,18 @@ def get_today_daily() -> DailyDigest:
 
 @router.get("/digests", response_model=list[DigestSummary])
 def list_digests() -> list[DigestSummary]:
+    """Every stored digest, newest first. Lightweight: counts and window only."""
     return [
-        DigestSummary(date=date, title=title, news_count=news_count, github_count=github_count)
-        for date, title, news_count, github_count in store.list_digest_summaries()
+        DigestSummary(
+            date=summary.date,
+            title=summary.title,
+            news_count=summary.news_count,
+            github_count=summary.github_count,
+            top_story_count=summary.top_story_count,
+            window_start=_iso(summary.window_start),
+            window_end=_iso(summary.window_end),
+        )
+        for summary in store.list_digest_summaries()
     ]
 
 
@@ -199,6 +208,15 @@ def _token_hint(token: str) -> str:
     if len(token) <= 12:
         return "***"
     return f"{token[:10]}...{token[-4:]}"
+
+
+def _iso(moment: datetime | None) -> str | None:
+    """A stored timestamp as UTC ISO, or None. Reads stay uniform across routes."""
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 @router.post("/push/register", response_model=PushRegisterResponse)

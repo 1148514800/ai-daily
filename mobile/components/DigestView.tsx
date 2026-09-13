@@ -1,4 +1,5 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { ReactNode } from 'react';
 import type { DailyDigest, NewsItem } from '../types';
 import { formatLongDate } from '../lib/format';
 import { buildDigestSections, summarizeDigest } from '../lib/digestSections';
@@ -12,9 +13,25 @@ type DigestViewProps = {
   digest: DailyDigest;
   onOpenNews: (id: string) => void;
   showFinishedHint?: boolean;
+  /**
+   * The heading to show. Falls back to the digest's stored title so a caller
+   * that does not care about today/历史 wording still renders something sane.
+   */
+  heading?: string;
+  /** Rendered under the overview: the date navigation for an open digest. */
+  footerNav?: ReactNode;
+  /** Rendered just after the heading, e.g. a hint that this is not today. */
+  headerNote?: ReactNode;
 };
 
-export function DigestView({ digest, onOpenNews, showFinishedHint = true }: DigestViewProps) {
+export function DigestView({
+  digest,
+  onOpenNews,
+  showFinishedHint = true,
+  heading,
+  footerNav,
+  headerNote,
+}: DigestViewProps) {
   // The server ranks the digest and marks the leading stories, so the split
   // into 今日必看 / 重点新闻 / 更多动态 is a read of the payload rather than a
   // second opinion. Every story is rendered: the lower-ranked ones are not
@@ -29,7 +46,8 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
       showsVerticalScrollIndicator={false}
     >
       <Text style={styles.date}>{formatLongDate(digest.date)}</Text>
-      <Text style={styles.title}>{digest.title}</Text>
+      <Text style={styles.title}>{heading ?? digest.title}</Text>
+      {headerNote}
       {/* The overview is computed from the payload, so it cannot disagree with
           the list below it and costs no extra request. */}
       <Text style={styles.count}>今日收录 {overview.total} 条 AI 动态</Text>
@@ -71,6 +89,8 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
           <Text style={styles.finishedText}>今日已读完</Text>
         </View>
       ) : null}
+
+      {footerNav}
     </ScrollView>
   );
 }

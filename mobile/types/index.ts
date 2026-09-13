@@ -69,6 +69,13 @@ export type DailyDigest = {
   description: string;
   news: NewsItem[];
   github_projects: GitHubProject[];
+  /**
+   * The UTC issue window this digest covers: (window_start, window_end].
+   * Present so history can explain why two days are separate; not shown in the
+   * normal reading flow. Null for a digest written before windows existed.
+   */
+  window_start?: string | null;
+  window_end?: string | null;
 };
 
 export type DigestSummary = {
@@ -76,6 +83,11 @@ export type DigestSummary = {
   title: string;
   news_count: number;
   github_count: number;
+  /** How many of `news_count` the digest presents as top stories. */
+  top_story_count?: number;
+  /** The digest's UTC issue window, carried for debug info only. */
+  window_start?: string | null;
+  window_end?: string | null;
 };
 
 export type FavoriteItemType = 'news' | 'github';

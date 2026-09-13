@@ -57,6 +57,17 @@ export function appLocalDate(date: Date): string {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
+/**
+ * Whether a digest date (``YYYY-MM-DD``) is the current day in APP_TIMEZONE.
+ *
+ * Lives here because it is the same fixed-offset conversion the time labels
+ * use: the digest date is assigned by the backend in APP_TIMEZONE, so a phone
+ * set to another timezone must not decide that today's digest is yesterday's.
+ */
+export function isTodayInAppTimezone(date: string, now: Date = new Date()): boolean {
+  return date === appLocalDate(now);
+}
+
 /** ``HH:MM`` in APP_TIMEZONE. */
 export function formatClock(date: Date): string {
   const parts = appLocalParts(date);

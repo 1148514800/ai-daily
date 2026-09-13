@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from app.collectors.rss import CollectResult, collect_all_sources
 from app.config.ranking import top_story_limit
 from app.config.timezone import digest_date_for, today_digest_date
-from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
+from app.db.repositories import (
+    DigestRepository,
+    DigestSummaryData,
+    GitHubRepository,
+    NewsRepository,
+)
 from app.db.session import new_session
 from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
 from app.pipelines.dedup import dedupe_articles
@@ -440,7 +445,8 @@ class DigestStore:
         finally:
             session.close()
 
-    def list_digest_summaries(self) -> list[tuple[str, str, int, int]]:
+    def list_digest_summaries(self) -> list[DigestSummaryData]:
+        """Every stored digest, newest first, as counts plus its window."""
         session = new_session()
         try:
             return DigestRepository(session).list_summaries()

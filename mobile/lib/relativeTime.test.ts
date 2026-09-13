@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { appLocalDate, formatClock, formatRelativeTime } from './relativeTime.ts';
+import {
+  appLocalDate,
+  formatClock,
+  formatRelativeTime,
+  isTodayInAppTimezone,
+} from './relativeTime.ts';
 
 // 2026-09-13 10:00 Asia/Shanghai == 2026-09-13 02:00 UTC.
 const NOW = new Date('2026-09-13T02:00:00Z');
@@ -102,4 +107,17 @@ test('appLocalDate reports the date in APP_TIMEZONE', () => {
 
 test('formatClock renders zero-padded APP_TIMEZONE time', () => {
   assert.equal(formatClock(new Date('2026-09-13T01:05:00Z')), '09:05');
+});
+
+test('isTodayInAppTimezone compares in APP_TIMEZONE, not the device zone', () => {
+  // 2026-09-12 17:00 UTC is already 2026-09-13 01:00 in Asia/Shanghai, so a
+  // digest dated 09-13 is today's even though UTC still says the 12th.
+  const now = new Date('2026-09-12T17:00:00Z');
+
+  assert.equal(isTodayInAppTimezone('2026-09-13', now), true);
+  assert.equal(isTodayInAppTimezone('2026-09-12', now), false);
+});
+
+test('isTodayInAppTimezone rejects an empty date', () => {
+  assert.equal(isTodayInAppTimezone('', new Date('2026-09-13T02:00:00Z')), false);
 });

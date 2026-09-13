@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.7 - Daily Home Experience
+Current Phase: Phase 10.8 - Digest History + Date Navigation
 
 Completed:
 - 项目初始化
@@ -30,6 +30,8 @@ Completed:
 - 内容多样性：topic（10 类）与 company 的确定性识别 + soft diversity penalty，避免同一公司 / 同一 topic 霸榜（Phase 10.6）
 - 日报首页：Mobile 按 rank 分出「今日必看（1~3）/ 重点新闻（4~10）/ 更多动态（11+）」三层，并加日报概览与 GitHub 区块（Phase 10.7）
 - topic 中文标签与人类友好时间：API 返回 topic / company，客户端只做映射；相对时间只在当前日报使用，历史日报一律绝对时间（Phase 10.7）
+- 历史日报与日期导航：新增「历史」入口与列表（只显示真实存在的日报），看某天日报时可在**真实日报**之间前后切换，API /digests 补充 top_story_count 与 window（Phase 10.8）
+- digest 客户端内存 cache（date -> DailyDigest，仅进程内），9-13 → 9-12 → 9-13 往返不再重复请求；后端 SQLite 仍是唯一 source of truth（Phase 10.8）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -64,6 +66,12 @@ Current Architecture:
 - 人类友好时间集中在 mobile/lib/relativeTime.ts：按 APP_TIMEZONE 换算，< 1 分钟「刚刚」、< 1 小时分钟、< 6 小时小时、同一天「今天 HH:MM」、前一天「昨天 HH:MM」、更早「M月D日 HH:MM」
 - 相对时间只在「当前日报」使用：digest.date != 今天时直接给绝对时间，因此打开历史日报不会把旧新闻显示成「刚刚」；无法解析的时间返回空字符串
 - 空 section 不渲染：今日必看不足 3 条只显示实际条数，没有更多动态 / 没有 GitHub 项目时不显示对应标题
+- 历史日报由 GET /api/v1/digests（列表）+ GET /api/v1/daily/{date}（单日）提供；列表只返回 date / title / news_count / github_count / top_story_count / window，**不返回任何新闻正文**
+- top_story_count 与 get_news 使用同一个 TOP_STORY_LIMIT，所以列表说多少条重点，点进去就是多少条
+- 日期导航在「真实日报列表」上前后移动（mobile/lib/digestHistory.ts 的纯函数 findNeighbours），不是 date ± 1 day：数据库缺哪天就跳过哪天，绝不打开不存在的日期
+- Today 复用 GET /api/v1/daily 既有的「有今天用今天、没有用最新一份」语义，客户端只决定标题（今日 / YYYY年M月D日）与是否展示 fallback 提示，不伪造今天日报
+- 历史日报是 snapshot：只读 SQLite，不触发采集 / LLM，GitHub 也取当天保存的那批
+- 客户端 cache（mobile/lib/digestCache.ts）只在内存里，key 为 date，命中不发请求；失败结果不缓存，后端 SQLite 仍是唯一 source of truth
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -150,8 +158,19 @@ Not in scope（Phase 10.4）:
 - 未引入 Alembic，未新增数据库表或列（事件去重只改 daily_digest_news 的内容）
 - 未做跨日重新聚类：事件去重只在写入某份日报前运行，历史日报不自动重算
 
+Not in scope（Phase 10.8）:
+- 未引入搜索 / 全文搜索 / embedding / RAG / 个性化推荐 / 登录 / 云同步
+- 未新增新闻源，未调整 ranking 参数，未用 LLM 生成日报总结，未做自动历史 backfill
+- 未做日历（Calendar）大组件：只有历史列表 + 前一天 / 后一天
+- 未改 issue window、Scheduler 08:00、Mobile API contract、收藏、Push、本地部署
+- 未改动数据库表结构（history 只是把已有 digest 读出来）
+
 Known Issues:
 - 真机（Android APK）验收未在本环境执行：当前机器没有 Android SDK（ANDROID_HOME / adb 均缺失），也没有连接的设备，只能完成 tsc + 单元测试 + 真实 API payload 验证
+- digest cache 只活在 App 进程内：杀掉进程或切后端地址后第一次打开仍会请求一次，没有持久缓存，也没有跨设备的离线阅读
+- 历史列表一次返回全部日期，没有分页；当前量级（个人单用户、一天一条）足够，若积累到数千天需要再加分页
+- 历史日报的 GitHub 区块来自当天保存的关联；如果那天 GitHub 采集失败，历史日报里就没有 GitHub 内容（不会用今天的 Trending 补）
+- 前一天 / 后一天按数据库里的真实日报跳转，因此某天漏跑时会直接跳过：这是有意行为，但用户无法从 UI 看出中间少了哪一天
 - 时间显示按 APP_TIMEZONE 固定 +08:00 偏移换算，因此设备时区不影响结果；若以后把 APP_TIMEZONE 改为有夏令时的时区，需要改成真正的时区换算
 - topic / company 继承 Phase 10.6 的规则局限：一条新闻同时提到多家公司只记第一家；分类失败不显示标签（回退 category）
 - Top 3 是固定的 3 条：当天如果只有 1~2 条新闻，今日必看就只有 1~2 条，不做补齐
