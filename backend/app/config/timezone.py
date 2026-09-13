@@ -30,21 +30,5 @@ def digest_date_for(moment: datetime) -> str:
     return moment.astimezone(app_timezone()).strftime(DIGEST_DATE_FORMAT)
 
 
-def digest_date_for_iso(value: str) -> str | None:
-    """Return the digest date for a stored ISO timestamp.
-
-    None means the timestamp is missing or unparseable, so callers can treat it
-    as belonging to no day instead of crashing. Naive values are read as UTC,
-    which is how published_at is stored.
-    """
-    if not value:
-        return None
-    try:
-        moment = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return digest_date_for(moment)
-
-
 def today_digest_date() -> str:
     return digest_date_for(datetime.now(timezone.utc))

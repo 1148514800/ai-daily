@@ -49,3 +49,7 @@ class DailyDigest(BaseModel):
     description: str
     news: list[NewsItem]
     github_projects: list[GitHubProject]
+    # The UTC issue window the digest covers: (window_start, window_end].
+    # None for a digest written before windows existed.
+    window_start: str | None = None
+    window_end: str | None = None

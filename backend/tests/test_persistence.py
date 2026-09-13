@@ -15,6 +15,7 @@ from app.db.repositories import (
 from app.db.session import new_session
 from app.models import GitHubProject, NewsCategory, NewsItem
 from app.services.digest_store import DigestStore, store
+from app.services.digest_window import DigestWindow
 from tests.conftest import FROZEN_NOW, day_feeds, make_fixture_fetch
 
 UTC = timezone.utc
@@ -22,6 +23,14 @@ UTC = timezone.utc
 # 2026-09-10 10:00 in Asia/Shanghai: the local day these tests write digests
 # for, so an article's calendar day matches the digest it is linked to.
 PERSISTED_AT = datetime(2026, 9, 10, 2, 0, tzinfo=UTC)
+
+# The issue window those persisted digests claim to cover, in UTC.
+WINDOW_START = datetime(2026, 9, 9, 16, 0, tzinfo=UTC)
+WINDOW_END = datetime(2026, 9, 10, 16, 0, tzinfo=UTC)
+
+
+def window() -> DigestWindow:
+    return DigestWindow(start=WINDOW_START, end=WINDOW_END)
 
 def news_item(index: int, *, source: str = "OpenAI") -> NewsItem:
     return NewsItem(
@@ -154,6 +163,8 @@ def test_same_day_save_updates_single_digest() -> None:
             description="first",
             news_ids=["rss-0001"],
             github_ids=[],
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
         )
         session.commit()
         repository.save(
@@ -162,12 +173,15 @@ def test_same_day_save_updates_single_digest() -> None:
             description="second",
             news_ids=["rss-0002", "rss-0001"],
             github_ids=[],
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
         )
         session.commit()
         assert repository.count() == 1
         # The ordering is replaced, not appended.
         assert [item.id for item in repository.get_news("2026-09-10")] == ["rss-0002", "rss-0001"]
-        assert repository.get_meta("2026-09-10") == ("v2", "second")
+        assert repository.get_meta("2026-09-10")[0:2] == ("v2", "second")
+        assert repository.get_window("2026-09-10") == (WINDOW_START, WINDOW_END)
     finally:
         session.close()
 
@@ -293,7 +307,12 @@ def test_persist_failure_rolls_back_whole_digest(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("app.db.repositories.DigestRepository.save", boom)
     with pytest.raises(RuntimeError):
-        store.persist(date="2026-09-10", news_items=[news_item(1)], github_projects=[github_project(1)])
+        store.persist(
+            date="2026-09-10",
+            window=window(),
+            news_items=[news_item(1)],
+            github_projects=[github_project(1)],
+        )
 
     session = new_session()
     try:
@@ -305,7 +324,12 @@ def test_persist_failure_rolls_back_whole_digest(monkeypatch: pytest.MonkeyPatch
 
 
 def test_data_persists_across_sessions() -> None:
-    store.persist(date="2026-09-10", news_items=[news_item(1)], github_projects=[github_project(1)])
+    store.persist(
+        date="2026-09-10",
+        window=window(),
+        news_items=[news_item(1)],
+        github_projects=[github_project(1)],
+    )
 
     # A brand new store with no in-memory state still sees the rows.
     fresh = DigestStore()
@@ -316,8 +340,13 @@ def test_data_persists_across_sessions() -> None:
 
 
 def test_failed_refresh_keeps_existing_digest() -> None:
-    store.persist(date="2026-09-10", news_items=[news_item(1)], github_projects=[github_project(1)])
-    saved = store.persist(date="2026-09-10", news_items=[], github_projects=[])
+    store.persist(
+        date="2026-09-10",
+        window=window(),
+        news_items=[news_item(1)],
+        github_projects=[github_project(1)],
+    )
+    saved = store.persist(date="2026-09-10", window=window(), news_items=[], github_projects=[])
 
     assert saved is False
     assert store.last_kept_previous is True
@@ -327,13 +356,24 @@ def test_failed_refresh_keeps_existing_digest() -> None:
 
 def test_empty_github_result_keeps_linked_projects() -> None:
     """A GitHub outage on a later refresh must not erase the day's projects."""
-    store.persist(date="2026-09-10", news_items=[news_item(1)], github_projects=[github_project(1)])
-    store.persist(date="2026-09-10", news_items=[news_item(2)], github_projects=None)
+    store.persist(
+        date="2026-09-10",
+        window=window(),
+        news_items=[news_item(1)],
+        github_projects=[github_project(1)],
+    )
+    store.persist(
+        date="2026-09-10",
+        window=window(),
+        news_items=[news_item(2)],
+        github_projects=None,
+    )
 
     digest = store.get_digest("2026-09-10")
     assert [item.id for item in digest.github_projects] == ["gh-0001"]
     assert store.last_github_count == 1
-    assert [item.id for item in digest.news] == ["rss-0002"]
+    # The second refresh extends the digest instead of replacing it.
+    assert [item.id for item in digest.news] == ["rss-0001", "rss-0002"]
 
 
 def test_refresh_second_day_creates_new_digest() -> None:
@@ -384,6 +424,11 @@ def test_same_day_refresh_updates_not_duplicates(
 
 
 def test_stats_reports_totals() -> None:
-    store.persist(date="2026-09-10", news_items=[news_item(1), news_item(2)], github_projects=[github_project(1)])
+    store.persist(
+        date="2026-09-10",
+        window=window(),
+        news_items=[news_item(1), news_item(2)],
+        github_projects=[github_project(1)],
+    )
     digests, news_total, github_total = store.stats()
     assert (digests, news_total, github_total) == (1, 2, 1)

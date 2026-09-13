@@ -21,6 +21,8 @@ class CombinedRefresh:
     reports: list
     github_stats: GitHubRefreshStats
     saved: bool
+    window_start: datetime
+    window_end: datetime
 
 
 def refresh_all(
@@ -39,8 +41,9 @@ def refresh_all(
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     date = digest_date_for(current)
+    window = store.resolve_window(date, current)
 
-    news_items, reports = store.collect_news(date, current, fetch_text)
+    news_items, reports = store.collect_news(window, current, fetch_text)
     github_stats = github_store.refresh(
         fetch_text=fetch_trending,
         github_client=github_client,
@@ -49,7 +52,15 @@ def refresh_all(
 
     saved = store.persist(
         date=date,
+        window=window,
         news_items=news_items,
         github_projects=github_store.list_projects(),
     )
-    return CombinedRefresh(date=date, reports=reports, github_stats=github_stats, saved=saved)
+    return CombinedRefresh(
+        date=date,
+        reports=reports,
+        github_stats=github_stats,
+        saved=saved,
+        window_start=window.start,
+        window_end=window.end,
+    )

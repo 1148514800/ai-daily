@@ -1,24 +1,41 @@
 import logging
 from datetime import datetime, timezone
 
-from app.collectors.rss import (
-    CollectResult,
-    article_within_last_hours,
-    belongs_to_digest_date,
-    collect_all_sources,
-)
-from app.config.timezone import digest_date_for, digest_date_for_iso, today_digest_date
+from app.collectors.rss import CollectResult, collect_all_sources
+from app.config.timezone import digest_date_for, today_digest_date
 from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
 from app.db.session import new_session
 from app.models import DailyDigest, GitHubProject, NewsItem
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.normalize import news_item_from_raw
+from app.services.digest_window import (
+    DEFAULT_WINDOW_HOURS,
+    DigestWindow,
+    as_utc,
+    resolve_window,
+)
 from app.services.llm import EnrichmentStats, enrich_articles
 
 logger = logging.getLogger(__name__)
 
 DIGEST_TITLE = "今日 AI 日报"
 EMPTY_DESCRIPTION = "今天还没有新的 AI 资讯。"
+
+
+def _iso(moment: datetime | None) -> str | None:
+    return as_utc(moment).isoformat() if moment is not None else None
+
+
+def _ordered_unique_by_id(items: list[NewsItem]) -> list[NewsItem]:
+    """Drop repeated news ids while keeping first-seen order."""
+    seen: set[str] = set()
+    ordered: list[NewsItem] = []
+    for item in items:
+        if item.id in seen:
+            continue
+        seen.add(item.id)
+        ordered.append(item)
+    return ordered
 
 
 def now_utc() -> datetime:
@@ -54,17 +71,15 @@ class DigestStore:
 
     def collect_news(
         self,
-        date: str,
+        window: DigestWindow,
         now: datetime | None = None,
         fetch_text=None,
     ) -> tuple[list[NewsItem], list[CollectResult]]:
-        """Collect, filter, dedupe, and enrich news for one digest date.
+        """Collect, filter, dedupe, and enrich the news for one issue window.
 
-        Two independent conditions must hold: the article is inside the rolling
-        24h window (which also rejects future timestamps) *and* its
-        APP_TIMEZONE calendar day is the digest date. The digest is a calendar
-        day report, so a neighbouring day's article never leaks in. Does not
-        touch the database.
+        Membership is decided by ``window_start < published_at <= window_end``,
+        which already excludes future timestamps because ``window_end`` is never
+        later than the refresh time. Does not touch the database.
         """
         current = now or now_utc()
         if current.tzinfo is None:
@@ -89,18 +104,17 @@ class DigestStore:
         for report in reports:
             merged.extend(report.valid)
 
-        recent = [article for article in merged if article_within_last_hours(article, current)]
-        dated = [article for article in recent if belongs_to_digest_date(article.published_at, date)]
-        self.last_recent_count = len(recent)
-        if len(dated) != len(recent):
+        in_window = [article for article in merged if window.contains(article.published_at)]
+        self.last_recent_count = len(in_window)
+        if len(in_window) != len(merged):
             logger.info(
-                "dropped %s articles outside digest date date=%s kept=%s window=%s",
-                len(recent) - len(dated),
-                date,
-                len(dated),
-                len(recent),
+                "dropped %s articles outside the issue window start=%s end=%s kept=%s",
+                len(merged) - len(in_window),
+                window.start.isoformat(),
+                window.end.isoformat(),
+                len(in_window),
             )
-        deduped = dedupe_articles(dated)
+        deduped = dedupe_articles(in_window)
 
         try:
             news_items, llm_stats = enrich_articles(deduped)
@@ -130,20 +144,58 @@ class DigestStore:
         fetch_text=None,
         github_projects: list[GitHubProject] | None = None,
     ) -> list[CollectResult]:
-        """Collect news and persist the day's digest."""
+        """Collect news and persist the current digest."""
         current = now or now_utc()
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         date = digest_date_for(current)
 
-        news_items, reports = self.collect_news(date, current, fetch_text)
-        self.persist(date=date, news_items=news_items, github_projects=github_projects)
+        window = self.resolve_window(date, current)
+        news_items, reports = self.collect_news(window, current, fetch_text)
+        self.persist(
+            date=date, window=window, news_items=news_items, github_projects=github_projects
+        )
         return reports
+
+    def resolve_window(self, date: str, current: datetime) -> DigestWindow:
+        """Pick the issue window for the digest dated ``date``.
+
+        An existing digest keeps its original ``window_start`` and only moves
+        ``window_end`` forward, so re-refreshing the same day adds news instead of
+        restarting the interval. A new digest continues from the previous
+        successful cutoff, and the first one falls back to the last 24h.
+        """
+        session = new_session()
+        try:
+            repository = DigestRepository(session)
+            window = repository.get_window(date)
+            existing_start = window[0] if window is not None else None
+            previous_end = repository.latest_window_end(date)
+        finally:
+            session.close()
+
+        resolved = resolve_window(
+            now=current,
+            existing_start=existing_start,
+            previous_end=previous_end,
+            hours=DEFAULT_WINDOW_HOURS,
+        )
+        if previous_end is not None and existing_start is None and resolved.start != as_utc(previous_end):
+            # The previous cutoff was unusable, so the day is back on the default
+            # lookback. Surfaced once here rather than hidden in the fallback.
+            logger.warning(
+                "previous cutoff unusable date=%s previous_end=%s; using default %sh window",
+                date,
+                as_utc(previous_end).isoformat(),
+                DEFAULT_WINDOW_HOURS,
+            )
+        return resolved
 
     def persist(
         self,
         *,
         date: str,
+        window: DigestWindow,
         news_items: list[NewsItem],
         github_projects: list[GitHubProject] | None,
     ) -> bool:
@@ -155,8 +207,11 @@ class DigestStore:
         """
         session = new_session()
         try:
-            linked = self._only_on_date(date, news_items)
-            if not linked and DigestRepository(session).exists(date):
+            repository = DigestRepository(session)
+            collected = self._within_window(window, news_items)
+            # Nothing collected while a digest already exists means a collector
+            # outage, not an empty day: keep the previous digest and report it.
+            if not collected and repository.exists(date):
                 session.rollback()
                 self.last_kept_previous = True
                 self.last_saved_date = None
@@ -165,12 +220,17 @@ class DigestStore:
                 logger.warning("refresh produced no news; keeping existing digest date=%s", date)
                 return False
 
-            # Every collected article is stored, even one whose calendar day is
-            # not this digest's date: only the digest link is day-restricted, so
-            # an article is never lost because it arrived after its own day.
+            # A second refresh on the same day extends the digest instead of
+            # replacing it, so earlier news stays linked, in its original order,
+            # ahead of the newly collected items.
+            candidates = _ordered_unique_by_id(repository.get_news(date) + collected)
+            merged = self._within_window(window, candidates)
+            merged_ids = [item.id for item in merged]
+            # Every collected article is stored, even one outside this window:
+            # only the digest link is window-restricted, so an article is never
+            # lost, it just stays unlinked until a window covers it.
             NewsRepository(session).upsert_many(news_items)
             projects = github_projects or []
-            repository = DigestRepository(session)
             if projects:
                 GitHubRepository(session).upsert_many(projects)
                 github_ids = [project.id for project in projects]
@@ -179,23 +239,20 @@ class DigestStore:
                 # to the day. Only a non-empty result replaces the ordering.
                 github_ids = repository.get_github_ids(date)
 
-            sources = sorted({item.source for item in linked})
-            description = (
-                f"来自 {'、'.join(sources)} 的 {len(linked)} 条更新。"
-                if linked
-                else EMPTY_DESCRIPTION
-            )
+            description = self._describe(merged)
             repository.save(
                 date=date,
                 title=DIGEST_TITLE,
                 description=description,
-                news_ids=[item.id for item in linked],
+                news_ids=merged_ids,
                 github_ids=github_ids,
+                window_start=window.start,
+                window_end=window.end,
             )
             session.commit()
             self.last_kept_previous = False
             self.last_saved_date = date
-            self.last_news_count = len(linked)
+            self.last_news_count = len(merged_ids)
             self.last_github_count = len(github_ids)
             return True
         except Exception:
@@ -205,22 +262,34 @@ class DigestStore:
         finally:
             session.close()
 
-    def _only_on_date(self, date: str, news_items: list[NewsItem]) -> list[NewsItem]:
+    def _within_window(self, window: DigestWindow, news_items: list[NewsItem]) -> list[NewsItem]:
         """Last line of defence before a digest-to-news link is written.
 
-        The collector already filters by calendar day, but every write path runs
-        through here, so a future caller cannot reintroduce cross-day news: an
-        article is only linked to the digest whose local date it belongs to.
+        The collector already filters by window, but every write path runs
+        through here, so no caller can link news to a digest it does not belong
+        to: only ``window_start < published_at <= window_end`` is linked.
         """
-        kept = [item for item in news_items if digest_date_for_iso(item.published_at) == date]
+        kept = [item for item in news_items if window.contains(item.published_at)]
         dropped = len(news_items) - len(kept)
         if dropped:
             logger.warning(
-                "refused %s news items whose local date is not the digest date date=%s",
+                "refused %s news items outside the issue window start=%s end=%s",
                 dropped,
-                date,
+                window.start.isoformat(),
+                window.end.isoformat(),
             )
         return kept
+
+    def _describe(self, merged: list[NewsItem]) -> str:
+        """Summarise a digest by the sources of everything it links.
+
+        Derived from the merged list, not just this run's collection, so an
+        extended digest still describes its whole content.
+        """
+        if not merged:
+            return EMPTY_DESCRIPTION
+        sources = sorted({item.source for item in merged})
+        return f"来自 {'、'.join(sources)} 的 {len(merged)} 条更新。"
 
     def latest_date(self) -> str | None:
         session = new_session()
@@ -246,6 +315,8 @@ class DigestStore:
                 description=meta[1],
                 news=repository.get_news(date),
                 github_projects=repository.get_github(date),
+                window_start=_iso(meta[2]),
+                window_end=_iso(meta[3]),
             )
         finally:
             session.close()

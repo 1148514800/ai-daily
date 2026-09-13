@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -44,6 +44,19 @@ def _parse_datetime(value: str) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Normalise a stored timestamp to aware UTC.
+
+    SQLite hands back naive datetimes even for timezone-aware columns, so reads
+    must restore UTC explicitly before comparing against a window boundary.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _news_row_to_item(row: NewsArticleRow) -> NewsItem:
@@ -221,8 +234,14 @@ class DigestRepository:
         description: str,
         news_ids: list[str],
         github_ids: list[str],
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
     ) -> None:
-        """Create or update one digest plus its ordering, in the caller's transaction."""
+        """Create or update one digest plus its ordering, in the caller's transaction.
+
+        Callers pass the issue window the links were computed against, so later
+        refreshes and rebuilds can re-derive membership from stored timestamps.
+        """
         row = self.session.get(DailyDigestRow, date)
         if row is None:
             row = DailyDigestRow(date=date, title=title, description=description)
@@ -230,6 +249,10 @@ class DigestRepository:
         else:
             row.title = title
             row.description = description
+        if window_start is not None:
+            row.window_start = window_start
+        if window_end is not None:
+            row.window_end = window_end
         self.session.flush()
 
         # Replace the link rows so the final ordering for the day is exact.
@@ -266,11 +289,41 @@ class DigestRepository:
     def exists(self, date: str) -> bool:
         return self.session.get(DailyDigestRow, date) is not None
 
-    def get_meta(self, date: str) -> tuple[str, str] | None:
+    def get_meta(self, date: str) -> tuple[str, str, datetime | None, datetime | None] | None:
+        """Return (title, description, window_start, window_end) in UTC."""
         row = self.session.get(DailyDigestRow, date)
         if row is None:
             return None
-        return row.title, row.description
+        return row.title, row.description, _as_utc(row.window_start), _as_utc(row.window_end)
+
+    def get_window(self, date: str) -> tuple[datetime | None, datetime | None] | None:
+        """Return (window_start, window_end) for a digest in UTC, if it exists."""
+        row = self.session.get(DailyDigestRow, date)
+        if row is None:
+            return None
+        return _as_utc(row.window_start), _as_utc(row.window_end)
+
+    def latest_window_end(self, before_date: str) -> datetime | None:
+        """The window_end of the most recent digest before ``before_date``.
+
+        This is the cutoff a new digest continues from, so a missed day extends
+        the window instead of resetting it to a fixed lookback.
+        """
+        statement = (
+            select(DailyDigestRow.window_end)
+            .where(DailyDigestRow.date < before_date, DailyDigestRow.window_end.is_not(None))
+            .order_by(DailyDigestRow.date.desc())
+            .limit(1)
+        )
+        return _as_utc(self.session.scalar(statement))
+
+    def get_news_ids(self, date: str) -> list[str]:
+        statement = (
+            select(DailyDigestNewsRow.news_id)
+            .where(DailyDigestNewsRow.digest_date == date)
+            .order_by(DailyDigestNewsRow.position)
+        )
+        return list(self.session.scalars(statement).all())
 
     def get_news(self, date: str) -> list[NewsItem]:
         statement = (

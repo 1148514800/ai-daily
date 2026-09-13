@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.1（日报日期归属修复）
+Current Phase: Phase 10.2（Issue Window 日报模型）
 
 Completed:
 - 项目初始化
@@ -18,18 +18,22 @@ Completed:
 - Android 日报 Push 通知（Phase 9）
 - 本地长期部署、可配置 Backend URL 与可安装 APK（Phase 10）
 - 日报日期归属修复：future timestamp bug + natural-day invariant + 历史日报重建（Phase 10.1）
+- 日报改为 Issue Window（Since Last Successful Digest）：daily_digests 新增 window_start / window_end（UTC），窗口为 (window_start, window_end]（Phase 10.2）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- RSS -> Collector -> 24h window（0 <= now - published <= 24h，未来时间直接剔除）-> natural-day filter -> rule dedup -> LLM enrich -> SQLite
+- RSS -> Collector -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
-- 日报日期按 APP_TIMEZONE（默认 Asia/Shanghai）计算，published_at 仍保存 UTC
-- 日期归属是 invariant：一条新闻只属于 published_at 转成 APP_TIMEZONE 后的那个自然日；rolling 24h 只用于剔除过旧文章，不会让相邻日期进同一日报
-- 写入前有最终防线：DigestStore.persist() 在创建 daily_digest_news 关联前再次校验 news 的 local date == digest date，不符合就不建立关联（article 行本身仍保存）
-- 一次性修复命令：uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13，只读 news_articles 重建 daily_digest_news，不调用 RSS / LLM，不删除原始记录
+- 日报 date 仍按 APP_TIMEZONE（默认 Asia/Shanghai）计算；published_at 与 window_start / window_end 统一保存 UTC
+- 归属是 invariant：一条新闻只属于一个窗口，窗口为左开右闭 (window_start, window_end]，所以相邻日报的 news_id 交集必然为空
+- 窗口推导（app/services/digest_window.py）：已存在日报沿用其 window_start 并把 window_end 前移到当前 refresh；新日报 window_start = 上一份成功日报的 window_end；第一份日报 window_start = 当前时间 - 24h
+- 漏跑一天不丢内容：窗口从「上一次成功 cutoff」延续，而不是固定最近 24h
+- 同日二次 refresh 是合并而非覆盖：旧链接保留在前，新链接按 news_id 去重追加，window_start 不变、window_end 前移
+- 写入前有最终防线：DigestStore.persist() 在写 daily_digest_news 之前对最终 id 列表再校验一次窗口，窗口外文章仍保存在 news_articles，但不建立关联
+- 一次性修复命令：uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13，只读 news_articles 重建 daily_digest_news，不调用 RSS / LLM，不删除原始记录；窗口优先用日报已存的 window，否则按 DAILY_REFRESH_HOUR + APP_TIMEZONE 推导为 (cutoff(D-1), cutoff(D)]
 - Scheduler：进程内 APScheduler（AsyncIOScheduler）+ FastAPI lifespan，默认每天 08:00（APP_TIMEZONE）执行 refresh_all()
 - RefreshRun：refresh_runs 表记录 manual / scheduled / startup_catchup 的执行状态，只存简短错误
 - Startup catch-up：启动时若已过计划时间且今天没有成功刷新，则后台补跑一次，不阻塞启动
@@ -62,9 +66,14 @@ Not in scope（产品设计问题，与本阶段 bug 修复无关，明确未实
 - 48h multi-date archive / previous-day automatic backfill / 跨多日报自动 merge
 - 未修改 scheduler 时间语义，未修改 Today 页语义
 
+Not in scope（Phase 10.2）:
+- 未引入 first_seen_at
+- 未改 Scheduler 每天 08:00 的语义，未改 Mobile，未启用 Push，未做云部署
+
 Known Issues:
 - 无语义级事件聚类
-- 历史 future-timestamp bug 造成的跨日污染需要手动跑一次 rebuild_digests 修复（不会自动 backfill）
+- 历史 future-timestamp bug 造成的污染需要手动跑一次 rebuild_digests 修复（不会自动 backfill）
+- Phase 10.2 之前写入的日报没有 window_start / window_end，首次 rebuild 会按配置 cutoff 推导；若这些日报当时并非在 cutoff 时刻生成，推导窗口只是近似
 - GitHub 强关键词列表仍需按实际误报迭代
 - 未配置 GITHUB_TOKEN 时 REST metadata 易被匿名 rate limit 限制，此时自动使用 strict fallback
 - Scheduler 为进程内实现，仅支持单 worker；多 worker / 云部署需要外部 Scheduler

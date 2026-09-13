@@ -10,7 +10,6 @@ import httpx
 
 from app.collectors.raw import RawArticle
 from app.config.sources import RSSSource, enabled_sources
-from app.config.timezone import digest_date_for
 from app.models import NewsItem
 from app.pipelines.normalize import news_item_from_raw
 from app.pipelines.urls import canonicalize_url
@@ -197,24 +196,3 @@ def within_last_hours(item: NewsItem, now: datetime, hours: int = DEFAULT_WINDOW
     # even though "now - published <= 24h" would happily accept it.
     return timedelta(0) <= delta <= timedelta(hours=hours)
 
-
-def article_within_last_hours(article: RawArticle, now: datetime, hours: int = DEFAULT_WINDOW_HOURS) -> bool:
-    if article.published_at is None:
-        return False
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    published = _as_utc(article.published_at)
-    delta = _as_utc(now) - published
-    return timedelta(0) <= delta <= timedelta(hours=hours)
-
-
-def belongs_to_digest_date(published_at: datetime | None, digest_date: str) -> bool:
-    """True when an article's instant falls on the given APP_TIMEZONE day.
-
-    The daily digest is a calendar-day report, so an article belongs to exactly
-    one day: the local date its published_at converts to. A rolling 24h window
-    must never pull a neighbouring day's article into today's digest.
-    """
-    if published_at is None:
-        return False
-    return digest_date_for(published_at) == digest_date

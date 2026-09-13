@@ -59,6 +59,10 @@ class DailyDigestRow(Base):
     date: Mapped[str] = mapped_column(String(10), primary_key=True)
     title: Mapped[str] = mapped_column(Text, default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    # The issue window this digest covers, always stored in UTC. News is linked
+    # by "window_start < published_at <= window_end" rather than by calendar day.
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set once a push for this digest reached at least one device, so retries and
     # restarts never notify the same day twice.
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
