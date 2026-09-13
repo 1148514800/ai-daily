@@ -34,7 +34,7 @@ from app.services.article_extractor import (
     METHOD_RSS_SUMMARY,
     METHOD_WEB,
 )
-from app.services.news_topics import TOPIC_OTHER, detect_company, detect_topic
+from app.services.news_topics import TOPIC_OTHER, label_article
 
 logger = logging.getLogger(__name__)
 
@@ -465,9 +465,13 @@ def _candidate(
     window_end: datetime | None,
     settings: RankingSettings,
 ) -> _Candidate:
-    text = (item.title_cn, item.title_original, item.summary, item.why_it_matters, item.source)
-    topic = detect_topic(*text)
-    company = detect_company(*text)
+    """Label one article and score it.
+
+    The labels come from the shared helpers in ``news_topics``, so the API
+    reports exactly the topics this ordering was computed from instead of a
+    second copy of the rules.
+    """
+    topic, company = label_article(item)
     components = _base_components(
         item,
         window_start=window_start,

@@ -20,6 +20,7 @@ from app.db.session import configure_database, init_db, new_session
 from app.models import NewsCategory, NewsItem
 from app.services.digest_store import DigestStore, store
 from app.services.digest_window import DigestWindow
+from app.services.news_topics import TOPICS
 from tests.conftest import FROZEN_NOW, day_feeds, make_fixture_fetch
 
 UTC = timezone.utc
@@ -278,6 +279,43 @@ def test_news_detail_still_returns_the_original_body(ranked_client: TestClient) 
     body = detail.json()
     assert "content_original" in body
     assert body["content_language"] is not None
+
+
+# --- topic labels on the API (Phase 10.7) ---
+
+
+def test_daily_api_labels_every_story_with_a_topic(ranked_client: TestClient) -> None:
+    """The client renders a topic instead of classifying one itself."""
+    news = ranked_client.get("/api/v1/daily").json()["news"]
+
+    assert news
+    for entry in news:
+        assert "topic" in entry
+        assert "company" in entry
+        # A topic is always one of the taxonomy values, never blank or free text.
+        assert entry["topic"] in TOPICS
+
+
+def test_daily_api_topic_matches_the_ranker_label(ranked_client: TestClient) -> None:
+    """The label served is the same one the ordering was computed from."""
+    from app.services.digest_store import store
+
+    news = ranked_client.get("/api/v1/daily").json()["news"]
+    from_ranker = {entry.news_id: entry for entry in store.last_ranking_stats.ranked}
+
+    for entry in news:
+        ranked = from_ranker.get(entry["id"])
+        assert ranked is not None
+        assert entry["topic"] == ranked.topic
+        assert entry["company"] == ranked.company
+
+
+def test_news_detail_carries_a_topic_too(ranked_client: TestClient) -> None:
+    """A detail read keeps the fields the list had, plus the body."""
+    first = ranked_client.get("/api/v1/daily").json()["news"][0]
+    body = ranked_client.get(f"/api/v1/news/{first['id']}").json()
+
+    assert body["topic"] == first["topic"]
 
 
 # --- schema upgrade ---

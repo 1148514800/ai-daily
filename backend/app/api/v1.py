@@ -306,7 +306,9 @@ def _resolve_favorite_item(session, item_type: str, item_id: str):
     if item_type == "news":
         from app.db.repositories import NewsRepository
 
-        return NewsRepository(session).get(item_id)
+        # Labelled so a favorite card shows a topic like a digest card does;
+        # a favorite has no rank, so only the derived labels are added.
+        return NewsRepository(session).get_labelled(item_id)
     from app.db.repositories import GitHubRepository
 
     return GitHubRepository(session).get(item_id)

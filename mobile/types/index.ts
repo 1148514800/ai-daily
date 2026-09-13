@@ -23,6 +23,13 @@ export type NewsItem = {
   rank_score?: number | null;
   /** True for the leading stories the digest calls out. The rest are still here. */
   is_top_story?: boolean | null;
+  /**
+   * The topic the backend classified this story into, e.g. "model_release".
+   * Assigned by the server so the card shows the same label the ranking used.
+   */
+  topic?: string | null;
+  /** The company the backend detected, or an empty string. */
+  company?: string | null;
 };
 
 /**

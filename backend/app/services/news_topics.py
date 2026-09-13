@@ -231,3 +231,61 @@ def detect_company(*texts: str | None) -> str:
         if _matches(haystack, patterns, cjk_keywords):
             return name
     return ""
+
+
+def topic_for_news(
+    *,
+    title_cn: str = "",
+    title_original: str = "",
+    summary: str = "",
+    why_it_matters: str = "",
+    source: str = "",
+) -> str:
+    """The topic of one news article, derived from the fields that describe it.
+
+    This is the single definition of which article fields feed the classifier.
+    The ranker and the API both go through here, so a stored article and a
+    freshly collected one can never be labelled by different rules.
+    """
+    return detect_topic(title_cn, title_original, summary, why_it_matters, source)
+
+
+def company_for_news(
+    *,
+    title_cn: str = "",
+    title_original: str = "",
+    summary: str = "",
+    why_it_matters: str = "",
+    source: str = "",
+) -> str:
+    """The company one news article is about, or an empty string.
+
+    Same field set as ``topic_for_news``, kept next to it so the two labels are
+    always derived from the same article text.
+    """
+    return detect_company(title_cn, title_original, summary, why_it_matters, source)
+
+
+def article_text_fields(item) -> dict[str, str]:
+    """The article fields a label may be derived from.
+
+    One definition, so the ranker and the API can never disagree about which
+    text counts as evidence.
+    """
+    return dict(
+        title_cn=item.title_cn,
+        title_original=item.title_original,
+        summary=item.summary,
+        why_it_matters=item.why_it_matters,
+        source=item.source,
+    )
+
+
+def label_article(item) -> tuple[str, str]:
+    """The ``(topic, company)`` labels for one article.
+
+    The single entry point both the ranking and the API use, so the topic a card
+    shows is always the topic the ordering was computed from.
+    """
+    fields = article_text_fields(item)
+    return topic_for_news(**fields), company_for_news(**fields)

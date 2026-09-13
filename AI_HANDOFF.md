@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.6 - Daily Ranking + Top Stories + Content Diversity
+Current Phase: Phase 10.7 - Daily Home Experience
 
 Completed:
 - 项目初始化
@@ -28,6 +28,8 @@ Completed:
 - 日报排序：新增确定性 ranking 模块，按 importance / source / recency / content / cluster 计算 0-100 rank_score（Phase 10.6）
 - Top Stories：rank 前的新闻标记 is_top_story，非 Top 新闻仍然全部保留并关联到日报（Phase 10.6）
 - 内容多样性：topic（10 类）与 company 的确定性识别 + soft diversity penalty，避免同一公司 / 同一 topic 霸榜（Phase 10.6）
+- 日报首页：Mobile 按 rank 分出「今日必看（1~3）/ 重点新闻（4~10）/ 更多动态（11+）」三层，并加日报概览与 GitHub 区块（Phase 10.7）
+- topic 中文标签与人类友好时间：API 返回 topic / company，客户端只做映射；相对时间只在当前日报使用，历史日报一律绝对时间（Phase 10.7）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -55,6 +57,13 @@ Current Architecture:
 - Top Stories：TOP_STORY_LIMIT 默认 10（环境变量可覆盖），daily_digest_news 增加 rank / rank_score，is_top_story 读取时按当前 limit 计算；非 Top 新闻仍然全部保留并关联，只是标记为 false
 - 排序顺序在整份日报上单调不增（贪心覆盖全列表），因此 rank_score 可以与顺序一一对应
 - 可观察性：refresh 打印 Ranking 汇总（Candidates / Top stories / Topics / Companies）；AI_DAILY_DEBUG_RANKING=1 打印每条新闻的分数构成
+- 日报首页（Mobile）：DigestView 分三层渲染 —— 今日必看（rank 1~3，大标题 + 最多 3 行摘要 + 强调左边框）、重点新闻（rank 4~10）、更多动态（rank 11+）；分组与概览统计都在 mobile/lib/digestSections.ts（纯函数）
+- MUST_READ_LIMIT = 3 是阅读体验常量，与后端 TOP_STORY_LIMIT = 10 解耦；客户端只读取 rank / is_top_story / topic，不重新排序或打分
+- 日报概览在客户端由 payload 现算：总数 / 重点条数 / 来源去重 / topic 去重（忽略空 source 与 other），不新增 LLM 调用或接口请求
+- topic 中文标签集中在 mobile/lib/topics.ts（model_release → 模型 等 10 项，other 不显示）；API 返回 topic / company，后端复用 news_topics 的同一套标签，不重新实现分类
+- 人类友好时间集中在 mobile/lib/relativeTime.ts：按 APP_TIMEZONE 换算，< 1 分钟「刚刚」、< 1 小时分钟、< 6 小时小时、同一天「今天 HH:MM」、前一天「昨天 HH:MM」、更早「M月D日 HH:MM」
+- 相对时间只在「当前日报」使用：digest.date != 今天时直接给绝对时间，因此打开历史日报不会把旧新闻显示成「刚刚」；无法解析的时间返回空字符串
+- 空 section 不渲染：今日必看不足 3 条只显示实际条数，没有更多动态 / 没有 GitHub 项目时不显示对应标题
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -100,6 +109,13 @@ Push（产品决策，不是缺陷）:
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
 
+Not in scope（Phase 10.7）:
+- 未改 ranking 算法、采集、event dedup、正文提取：本阶段只重排展示与标签
+- 未引入新新闻源、LLM 日报总结、搜索、登录、个性化推荐、embeddings / RAG、全文翻译、云部署、图片抓取、动画
+- 未新增第二套评分：Mobile 只信任后端 rank / rank_score / is_top_story / topic，Top 3 只是视觉层级
+- 未把 topic 存进数据库：topic / company 仍由 news_topics 的纯函数按需计算，规则变更后历史文章一起生效
+- 未改 Scheduler / issue window / Push / 本地部署 / 数据库 schema
+
 Not in scope（Phase 10.6）:
 - 未引入 embeddings / 向量数据库 / RAG / 语义搜索 / 推荐系统 / 用户画像 / Agent
 - 未新增新闻源，未做全文翻译、云部署、HTTPS、Push
@@ -135,6 +151,10 @@ Not in scope（Phase 10.4）:
 - 未做跨日重新聚类：事件去重只在写入某份日报前运行，历史日报不自动重算
 
 Known Issues:
+- 真机（Android APK）验收未在本环境执行：当前机器没有 Android SDK（ANDROID_HOME / adb 均缺失），也没有连接的设备，只能完成 tsc + 单元测试 + 真实 API payload 验证
+- 时间显示按 APP_TIMEZONE 固定 +08:00 偏移换算，因此设备时区不影响结果；若以后把 APP_TIMEZONE 改为有夏令时的时区，需要改成真正的时区换算
+- topic / company 继承 Phase 10.6 的规则局限：一条新闻同时提到多家公司只记第一家；分类失败不显示标签（回退 category）
+- Top 3 是固定的 3 条：当天如果只有 1~2 条新闻，今日必看就只有 1~2 条，不做补齐
 - ranking 是启发式的：importance_score 由 LLM 给出，模型偏差会直接体现在顺序上；权重是保守的初始值，可能需要按真实日报继续校准
 - topic / company 是关键词规则，一条同时提到多家公司的新闻只记第一家（COMPANY_RULES 顺序）；分类失败落到 other / 空，只影响 diversity，不影响是否保留
 - diversity 是 soft penalty：真实数据里某个来源一天发很多条时，仍然可能占据较多 Top Stories 位置，penalty 只保证不会无脑霸榜

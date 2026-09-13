@@ -31,6 +31,11 @@ class NewsItem(BaseModel):
     rank: int | None = None
     rank_score: float | None = None
     is_top_story: bool | None = None
+    # The deterministic labels the ranking used for this article, reported so
+    # the client shows the same topic instead of classifying again. Empty when
+    # the article was read outside a digest and no label was computed.
+    topic: str = ""
+    company: str = ""
     # The original-language body. Excluded here on purpose: this model is also
     # the digest-list shape, and shipping every article body with the daily
     # digest would inflate the response the phone needs for a quick read.

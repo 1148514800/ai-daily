@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import TypeVar
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -20,6 +21,11 @@ from app.db.models import (
 from app.config.ranking import top_story_limit
 from app.models import GitHubProject, NewsCategory, NewsDetail, NewsItem
 from app.pipelines.urls import canonicalize_url
+from app.services.news_topics import label_article
+
+# ``_label_news`` returns whatever it was given, so a NewsItem stays a NewsItem
+# and a NewsDetail stays a NewsDetail (with its body) instead of widening.
+NewsItemT = TypeVar("NewsItemT", NewsItem, NewsDetail)
 
 ITEM_TYPE_NEWS = "news"
 ITEM_TYPE_GITHUB = "github"
@@ -126,6 +132,17 @@ def _news_row_to_detail(row: NewsArticleRow) -> NewsDetail:
     return NewsDetail(**_news_row_fields(row))
 
 
+def _label_news(item: NewsItemT) -> NewsItemT:
+    """Attach the deterministic topic and company labels to one article.
+
+    The same helpers the ranker uses, so the label a card shows is the label the
+    ordering was computed from. Nothing is persisted: both are derived from the
+    article's own text.
+    """
+    topic, company = label_article(item)
+    return item.model_copy(update={"topic": topic, "company": company})
+
+
 def _github_row_to_project(row: GitHubProjectRow) -> GitHubProject:
     try:
         topics = json.loads(row.topics_json or "[]")
@@ -213,9 +230,18 @@ class NewsRepository:
         row = self.session.get(NewsArticleRow, news_id)
         return _news_row_to_item(row) if row is not None else None
 
+    def get_labelled(self, news_id: str) -> NewsItem | None:
+        """One article with its topic, for a card read outside a digest."""
+        row = self.session.get(NewsArticleRow, news_id)
+        return None if row is None else _label_news(_news_row_to_item(row))
+
     def get_detail(self, news_id: str) -> NewsDetail | None:
         row = self.session.get(NewsArticleRow, news_id)
-        return _news_row_to_detail(row) if row is not None else None
+        if row is None:
+            return None
+        # The detail view is a superset of the list item, so it carries the same
+        # derived labels the digest card showed next to its rank.
+        return _label_news(_news_row_to_detail(row))
 
     def set_content(
         self,
@@ -473,6 +499,12 @@ class DigestRepository:
         existed still reports a coherent 1..N, and ``is_top_story`` is computed
         from the configured limit rather than stored, so changing the limit does
         not require rewriting history.
+
+        ``topic`` is recomputed here rather than stored. It is a pure function of
+        the article's own text, so there is nothing to keep in sync, and a rule
+        change applies to history as well as to new rows instead of leaving two
+        generations of labels behind. A pre-ranking row therefore gets a topic
+        too, even though it has no score.
         """
         statement = (
             select(NewsArticleRow, DailyDigestNewsRow.position, DailyDigestNewsRow.rank_score)
@@ -482,11 +514,13 @@ class DigestRepository:
         )
         limit = top_story_limit()
         return [
-            _news_row_with_rank(
-                row,
-                rank=position + 1,
-                rank_score=rank_score,
-                is_top_story=position < limit,
+            _label_news(
+                _news_row_with_rank(
+                    row,
+                    rank=position + 1,
+                    rank_score=rank_score,
+                    is_top_story=position < limit,
+                )
             )
             for row, position, rank_score in self.session.execute(statement).all()
         ]

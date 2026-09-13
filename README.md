@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 10.6 - Daily Ranking + Top Stories + Content Diversity
+Phase 10.7 - Daily Home Experience
 
-今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**并标出 Top Stories。
+今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页分为**今日必看 / 重点新闻 / 更多动态**三层。
 
 当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后可以阅读**原始语言的完整正文**。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
@@ -355,31 +355,17 @@ TOP_STORY_LIMIT = 10   （可用环境变量 TOP_STORY_LIMIT 覆盖）
 {
   "rank": 1,
   "rank_score": 71.5,
-  "is_top_story": true
+  "is_top_story": true,
+  "topic": "business",
+  "company": "OpenAI"
 }
 ```
 
-已有字段全部保留，`GET /api/v1/news/{id}` 不受影响。收藏 / 单独读取一条新闻时不带 rank（rank 只在某一份日报里有意义）。
+`topic` / `company` 是 Phase 10.7 的最小 API 扩展：由后端复用排序时的同一套确定性标签，客户端只做中文映射。已有字段全部保留，`GET /api/v1/news/{id}` 同样带上 topic（详情页字段仍是列表字段的超集）。收藏 / 单独读取一条新闻时不带 rank（rank 只在某一份日报里有意义），但会带 topic。
 
 ### Mobile 显示
 
-Mobile 没有重新设计页面，只是在现有日报页面上按 rank 顺序分组：
-
-```text
-今日 AI 日报
-
-重点新闻   Top 10
-  [Top 1] ...
-  ...
-
-更多新闻   其余 N 条
-  ...
-```
-
-- 分组逻辑在 `mobile/lib/digestSections.ts`（纯函数、可单测），只读取后端的 `is_top_story`，不在客户端重新决定谁重要
-- 所有新闻都会渲染，「更多新闻」不是丢弃，只是排在后面
-- 旧日报没有 `is_top_story` 时不做猜测，全部放进「更多新闻」，顺序保持后端返回的顺序
-- 新闻详情页的原文阅读逻辑不变
+首页分成三层，见 [今日日报首页](#今日日报首页phase-107)。
 
 ### 可观察性
 
@@ -403,6 +389,99 @@ AI_DAILY_DEBUG_RANKING=1 uv run python -m app.collectors.refresh
 ```text
 #1 score=71.5 importance=0.9 source=0.3 recency=0.7 content=0.9 cluster=0.0 diversity=0.0 topic=business company=OpenAI
 ```
+
+## 今日日报首页（Phase 10.7）
+
+Phase 10.6 已经算好顺序。Phase 10.7 只把这份顺序做成一个「每天 5～10 分钟能读完」的首页，**不改采集、不改 event dedup、不改正文提取、不改 ranking 算法**。
+
+```text
+今日 AI 日报
+2026年9月13日 星期日
+
+今日收录 12 条 AI 动态
+精选 10 条重点新闻 · 3 个来源 · 6 个话题
+
+🔥 今日必看        Top 3
+  #1 ...（大标题 + 最多 3 行摘要）
+  #2 ...
+  #3 ...
+
+⭐ 重点新闻        rank 4~10
+  ...
+
+📰 更多动态        rank 11+
+  ...
+
+💻 GitHub Trending
+  ...
+```
+
+### 三层分组
+
+分组完全来自后端已经返回的字段，客户端不重新排序、不重新打分：
+
+```text
+rank 1~3     今日必看   is_top_story = true，且 rank <= 3
+rank 4~10    重点新闻   is_top_story = true
+rank 11+     更多动态   其余全部
+```
+
+- `is_top_story` 与 `rank` 都由后端给出，Mobile 只做切分；Top 3 的「3」是**阅读体验**上的常量（`MUST_READ_LIMIT`），与后端 `TOP_STORY_LIMIT=10` 解耦，所以调整首屏层级不需要改排序契约
+- 所有新闻都会渲染：11+ 不是丢弃，只是排在后面
+- 旧日报没有 `is_top_story` 时不做猜测，全部进「更多动态」，顺序保持后端返回的顺序
+- 分组与统计都在 `mobile/lib/digestSections.ts`（纯函数、可单测），不堆在 Component 里
+- 新闻详情页与原文阅读逻辑不变
+
+### 日报概览
+
+顶部数字由当前 digest 在本地算出，不新增任何 LLM 调用或接口请求：
+
+```text
+今日收录 N 条 AI 动态      ← news.length
+精选 M 条重点新闻 · S 个来源 · T 个话题
+                            ← is_top_story 计数 / source 去重 / topic 去重
+```
+
+- 空 source 与 `other` topic 不计入统计，否则会把「没分类」说成一种话题
+- 没有来源或话题时对应片段直接省略，不显示 `0 个来源`
+
+### topic 标签与时间
+
+**topic**：分类仍然只发生在后端（Phase 10.6 的确定性规则），API 现在把 `topic` / `company` 一起返回（最小扩展，不重新实现分类）。客户端只做中文映射，集中维护在 `mobile/lib/topics.ts`：
+
+```text
+model_release → 模型      agent → Agent       research → 研究
+open_source → 开源        product → 产品      developer_tools → 开发工具
+hardware → 硬件           business → 商业     policy → 政策
+other → （不显示）
+```
+
+- 每张卡片**最多一个** topic 标签；`other` 不显示，「没分类」不是读者需要的信息
+- 后端没有给 topic 时回退到原来的 category 标签，不会出现英文枚举值
+
+**时间**：`mobile/lib/relativeTime.ts` 统一处理，并且**只在「当前日报」使用相对表述**：
+
+```text
+< 1 分钟     刚刚
+< 1 小时     35分钟前
+< 6 小时     2小时前
+同一天       今天 09:30
+前一天       昨天 22:00
+更早         9月10日 09:30
+```
+
+- 时间按 `APP_TIMEZONE`（Asia/Shanghai）换算，不看手机时区，所以卡片与日报日期永远一致
+- 打开历史日报时不使用相对表述（digest 日期不是今天 → 直接给绝对时间），因此不会把一周前的新闻说成「刚刚」
+- 时间戳缺失或不可解析时返回空字符串，卡片不显示时间而不是显示 `Invalid Date`
+
+### 空状态与异常
+
+- 今日必看不足 3 条：该 section 只显示实际条数（1~2 条），不补空位
+- 总新闻不足 10 条：重点新闻 section 自然变短或消失
+- 没有更多动态：不显示「更多动态」标题（空 section 不渲染）
+- 没有 GitHub 项目：不显示 GitHub section
+- 空日报：显示空状态文案（日报每天 08:00 更新）
+- Backend 请求失败：显示错误文案 + 「重新加载」
 
 ## 数据持久化
 

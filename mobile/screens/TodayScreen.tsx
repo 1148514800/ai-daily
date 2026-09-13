@@ -19,7 +19,7 @@ export function TodayScreen({ onOpenNews }: TodayScreenProps) {
         empty={status === 'success' && !!data && data.news.length === 0}
         loadingText="正在加载今日资讯..."
         errorText={error?.message}
-        emptyText="今天还没有生成日报"
+        emptyText="今天还没有生成日报。日报每天 08:00 自动更新，稍后再来看看。"
         onRetry={reload}
       >
         {data ? <DigestView digest={data} onOpenNews={onOpenNews} /> : null}
