@@ -8,6 +8,7 @@ from app.jobs.daily_refresh import run_manual_refresh
 from app.services.digest_store import store
 from app.services.event_dedup import format_event_dedup
 from app.services.article_extractor import format_extraction_stats
+from app.services.news_ranker import format_ranking, ranking_debug_enabled
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
@@ -130,6 +131,9 @@ def main() -> None:
                 print(line)
     print()
 
+    print(format_ranking(store.last_ranking_stats, debug=ranking_debug_enabled() or debug))
+    print()
+
     print("GitHub Trending")
     print(f"Fetched: {github_stats.fetched}")
     print(f"Parsed: {github_stats.parsed}")
@@ -160,10 +164,21 @@ def main() -> None:
     print()
 
     digest = store.get_digest(combined.date)
-    for item in digest.news[:8]:
-        score = item.importance_score
-        label = f"{score:02d}" if score is not None else "--"
-        print(f"[{label}] {item.source} | {item.title_cn}")
+    ranking = {entry.news_id: entry for entry in store.last_ranking_stats.ranked}
+    print("Daily Ranking")
+    print()
+    for item in digest.news:
+        entry = ranking.get(item.id)
+        score = f"{entry.rank_score:5.1f}" if entry else "  -- "
+        importance = item.importance_score
+        importance_label = f"{importance:02d}" if importance is not None else "--"
+        topic = entry.topic if entry else "-"
+        company = (entry.company or "-") if entry else "-"
+        print(f"{item.rank}. [{score}] {item.source} | {item.title_cn}")
+        print(
+            f"     source={item.source} topic={topic} company={company} "
+            f"importance={importance_label}"
+        )
     print()
     for index, project in enumerate(digest.github_projects, start=1):
         delta = project.stars_delta if project.stars_delta is not None else "-"

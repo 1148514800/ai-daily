@@ -372,8 +372,13 @@ def test_empty_github_result_keeps_linked_projects() -> None:
     digest = store.get_digest("2026-09-10")
     assert [item.id for item in digest.github_projects] == ["gh-0001"]
     assert store.last_github_count == 1
-    # The second refresh extends the digest instead of replacing it.
-    assert [item.id for item in digest.news] == ["rss-0001", "rss-0002"]
+    # The second refresh extends the digest instead of replacing it. The order
+    # is the Phase 10.6 ranking, so this asserts content is preserved rather
+    # than the append sequence: both articles are linked, ranked 1..N.
+    assert {item.id for item in digest.news} == {"rss-0001", "rss-0002"}
+    assert [item.rank for item in digest.news] == [1, 2]
+    # rss-0002 carries the higher importance_score, so it leads the digest.
+    assert digest.news[0].id == "rss-0002"
 
 
 def test_refresh_second_day_creates_new_digest() -> None:

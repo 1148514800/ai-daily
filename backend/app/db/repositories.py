@@ -17,6 +17,7 @@ from app.db.models import (
     RefreshRunRow,
     utcnow,
 )
+from app.config.ranking import top_story_limit
 from app.models import GitHubProject, NewsCategory, NewsDetail, NewsItem
 from app.pipelines.urls import canonicalize_url
 
@@ -95,6 +96,24 @@ def _news_row_fields(row: NewsArticleRow) -> dict:
 
 def _news_row_to_item(row: NewsArticleRow) -> NewsItem:
     return NewsItem(**_news_row_fields(row))
+
+
+def _news_row_with_rank(
+    row: NewsArticleRow,
+    *,
+    rank: int | None,
+    rank_score: float | None,
+    is_top_story: bool | None,
+) -> NewsItem:
+    """One article as the digest list shows it: the row plus its ranking.
+
+    The rank lives on the digest-to-news link, not on the article, so it is
+    supplied by the caller that knows which digest is being read. A favorite or a
+    detail lookup passes nothing and the fields stay empty.
+    """
+    return NewsItem(
+        **_news_row_fields(row), rank=rank, rank_score=rank_score, is_top_story=is_top_story
+    )
 
 
 def _news_row_to_detail(row: NewsArticleRow) -> NewsDetail:
@@ -341,11 +360,17 @@ class DigestRepository:
         github_ids: list[str],
         window_start: datetime | None = None,
         window_end: datetime | None = None,
+        rank_scores: dict[str, float] | None = None,
     ) -> None:
         """Create or update one digest plus its ordering, in the caller's transaction.
 
         Callers pass the issue window the links were computed against, so later
         refreshes and rebuilds can re-derive membership from stored timestamps.
+
+        ``rank_scores`` maps a news id to the score that put it in its place, and
+        the order of ``news_ids`` is the rank itself (first entry is rank 1). A
+        caller with no ranking to record simply omits it and the columns stay
+        empty, which is how a pre-ranking digest is read back.
         """
         row = self.session.get(DailyDigestRow, date)
         if row is None:
@@ -363,8 +388,17 @@ class DigestRepository:
         # Replace the link rows so the final ordering for the day is exact.
         self.session.execute(delete(DailyDigestNewsRow).where(DailyDigestNewsRow.digest_date == date))
         self.session.execute(delete(DailyDigestGitHubRow).where(DailyDigestGitHubRow.digest_date == date))
+        scores = rank_scores or {}
         for position, news_id in enumerate(news_ids):
-            self.session.add(DailyDigestNewsRow(digest_date=date, news_id=news_id, position=position))
+            self.session.add(
+                DailyDigestNewsRow(
+                    digest_date=date,
+                    news_id=news_id,
+                    position=position,
+                    rank=position + 1,
+                    rank_score=scores.get(news_id),
+                )
+            )
         for position, github_id in enumerate(github_ids):
             self.session.add(DailyDigestGitHubRow(digest_date=date, github_project_id=github_id, position=position))
         self.session.flush()
@@ -431,13 +465,31 @@ class DigestRepository:
         return list(self.session.scalars(statement).all())
 
     def get_news(self, date: str) -> list[NewsItem]:
+        """News linked to a digest, in rank order, each carrying its rank.
+
+        ``position`` is the stored ordering and the source of truth for the
+        sequence: it is what a rebuild and an older row both set. ``rank`` is
+        derived from the same position so a database written before ranking
+        existed still reports a coherent 1..N, and ``is_top_story`` is computed
+        from the configured limit rather than stored, so changing the limit does
+        not require rewriting history.
+        """
         statement = (
-            select(NewsArticleRow)
+            select(NewsArticleRow, DailyDigestNewsRow.position, DailyDigestNewsRow.rank_score)
             .join(DailyDigestNewsRow, DailyDigestNewsRow.news_id == NewsArticleRow.id)
             .where(DailyDigestNewsRow.digest_date == date)
             .order_by(DailyDigestNewsRow.position)
         )
-        return [_news_row_to_item(row) for row in self.session.scalars(statement).all()]
+        limit = top_story_limit()
+        return [
+            _news_row_with_rank(
+                row,
+                rank=position + 1,
+                rank_score=rank_score,
+                is_top_story=position < limit,
+            )
+            for row, position, rank_score in self.session.execute(statement).all()
+        ]
 
     def get_github(self, date: str) -> list[GitHubProject]:
         statement = (

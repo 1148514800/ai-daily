@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.5 - Original Article Content + Grounded Summary
+Current Phase: Phase 10.6 - Daily Ranking + Top Stories + Content Diversity
 
 Completed:
 - 项目初始化
@@ -25,11 +25,14 @@ Completed:
 - LLM Grounded Summary：prompt 明确禁止补充正文之外的事实，PROMPT_VERSION 升到 v2（Phase 10.5）
 - Article Detail API + Mobile 新闻详情页：详情页展示原语言正文，不翻译（Phase 10.5）
 - 历史文章正文 backfill 一次性命令（Phase 10.5）
+- 日报排序：新增确定性 ranking 模块，按 importance / source / recency / content / cluster 计算 0-100 rank_score（Phase 10.6）
+- Top Stories：rank 前的新闻标记 is_top_story，非 Top 新闻仍然全部保留并关联到日报（Phase 10.6）
+- 内容多样性：topic（10 类）与 company 的确定性识别 + soft diversity penalty，避免同一公司 / 同一 topic 霸榜（Phase 10.6）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> daily_digest_news
+- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> ranking -> daily_digest_news
 - 两层内容：列表只有中文标题 / 摘要 / Why it matters / importance_score（NewsItem，正文字段 exclude），详情额外返回原始正文（NewsDetail）
 - 正文提取（app/services/article_extractor.py）：所有来源共用一套 pipeline，不做 11 个 parser
 - 正文来源优先级：RSS/Atom 自带完整正文（content:encoded / Atom content，长度 >= rss_full_min_chars）-> 抓取文章网页并清洗 -> RSS description / summary 兜底
@@ -46,6 +49,12 @@ Current Architecture:
 - Mobile NewsDetailScreen 追加「原文内容」区块（分隔线 + 原文内容 · 英文原文 + 原始标题 + 原语言正文），渲染拆分在 mobile/lib/articleBody.ts（纯函数、可单测）；不提供自动翻译全文
 - 历史正文 backfill：uv run python -m app.jobs.backfill_article_content（--limit / --date），可中断、可重复、已提取跳过、单篇失败继续，不重建日报、不改 digest 关联
 - 可观察性：refresh 打印 Article extraction 汇总（Candidates / RSS full content / Web extracted / RSS fallback / Failed / Cache hit）；AI_DAILY_DEBUG_EXTRACTION=1 打印每篇 method 与字符数，绝不打印正文
+- 排序（app/services/news_ranker.py）：确定性 ranking，rank_score = importance*0.60 + source*0.14 + recency*0.10 + content*0.06 + cluster*0.10，再乘 100；不让 LLM 决定顺序，LLM 只提供 importance_score
+- 多样性重排：先按 rank_score 排序，再从头贪心选择，与前文重复 company / topic / source 时扣 soft penalty（company 3.0 / topic 2.0 / source 1.0，单条封顶 8.0），是软约束而非硬配额
+- topic 与 company 识别（app/services/news_topics.py）：确定性关键词规则，无 embeddings / NER；topic 10 类（model_release / agent / research / open_source / product / developer_tools / hardware / business / policy / other），company 命中 OpenAI / Anthropic / Google DeepMind / Meta / NVIDIA / DeepSeek / Alibaba Qwen / Moonshot Kimi / Hugging Face 等；英文关键词按整词匹配
+- Top Stories：TOP_STORY_LIMIT 默认 10（环境变量可覆盖），daily_digest_news 增加 rank / rank_score，is_top_story 读取时按当前 limit 计算；非 Top 新闻仍然全部保留并关联，只是标记为 false
+- 排序顺序在整份日报上单调不增（贪心覆盖全列表），因此 rank_score 可以与顺序一一对应
+- 可观察性：refresh 打印 Ranking 汇总（Candidates / Top stories / Topics / Companies）；AI_DAILY_DEBUG_RANKING=1 打印每条新闻的分数构成
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -91,6 +100,14 @@ Push（产品决策，不是缺陷）:
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
 
+Not in scope（Phase 10.6）:
+- 未引入 embeddings / 向量数据库 / RAG / 语义搜索 / 推荐系统 / 用户画像 / Agent
+- 未新增新闻源，未做全文翻译、云部署、HTTPS、Push
+- 未让 LLM 参与排序：LLM 只提供 importance_score，最终顺序是确定性计算
+- 未删除任何排名靠后的新闻：diversity penalty 是 soft penalty，非 Top 新闻仍然全部保存在 news_articles 并关联到日报
+- 未引入 Alembic；rank / rank_score 走既有 ALTER TABLE ADD COLUMN 补列
+- 未改 Scheduler 每天 08:00 语义，未改 issue window，未重新设计 Mobile
+
 Not in scope（Phase 10.5）:
 - 未做全文自动翻译、embeddings、向量数据库、RAG、语义搜索、Agent
 - 未新增新闻源，未做用户系统、云部署、HTTPS、Mobile 大规模重设计
@@ -118,6 +135,11 @@ Not in scope（Phase 10.4）:
 - 未做跨日重新聚类：事件去重只在写入某份日报前运行，历史日报不自动重算
 
 Known Issues:
+- ranking 是启发式的：importance_score 由 LLM 给出，模型偏差会直接体现在顺序上；权重是保守的初始值，可能需要按真实日报继续校准
+- topic / company 是关键词规则，一条同时提到多家公司的新闻只记第一家（COMPANY_RULES 顺序）；分类失败落到 other / 空，只影响 diversity，不影响是否保留
+- diversity 是 soft penalty：真实数据里某个来源一天发很多条时，仍然可能占据较多 Top Stories 位置，penalty 只保证不会无脑霸榜
+- rank 只对当前日报有意义：收藏与单独读取新闻不返回 rank；同一新闻在不同日报中的排名可能不同
+- 历史日报不会自动重新排序，需要手动跑一次 rebuild_digests 才会写入 rank / rank_score
 - OpenAI 官网对非浏览器请求返回 403，该来源正文会退回 RSS summary（其余 10 个来源可正常提取正文）
 - 正文提取是启发式规则而非通用阅读器，个别站点改版或反爬变化时会退回 RSS summary，并在 content_extraction_method 与日志中标明
 - content_language 只做脚本判定（中/英/日/韩/俄），不做统计语言识别

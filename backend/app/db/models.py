@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -89,6 +89,12 @@ class DailyDigestNewsRow(Base):
         String(64), ForeignKey("news_articles.id", ondelete="CASCADE"), primary_key=True
     )
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Ranking is a property of this digest, not of the article: the same story
+    # can rank differently in two digests. ``position`` stays the ordering column
+    # older rows and rebuilds read; ``rank`` is the same order expressed 1-based,
+    # which is what the API exposes. ``rank_score`` is the 0..100 total.
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class DailyDigestGitHubRow(Base):

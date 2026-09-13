@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 
 from app.collectors.rss import CollectResult, collect_all_sources
+from app.config.ranking import top_story_limit
 from app.config.timezone import digest_date_for, today_digest_date
 from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
 from app.db.session import new_session
@@ -16,6 +17,10 @@ from app.services.digest_window import (
     resolve_window,
 )
 from app.services.event_dedup import EventDedupStats, dedupe_events, log_event_dedup
+from app.services.news_ranker import (
+    RankingStats,
+    apply_ranking,
+)
 from app.services.llm import EnrichmentStats, enrich_articles
 from app.services.article_extractor import (
     ExtractionSettings,
@@ -87,6 +92,7 @@ class DigestStore:
         self.last_llm_stats: EnrichmentStats = EnrichmentStats()
         self.last_extraction_stats: ExtractionStats = ExtractionStats()
         self.last_event_stats: EventDedupStats = EventDedupStats()
+        self.last_ranking_stats: RankingStats = RankingStats()
         self.last_saved_date: str | None = None
         self.last_news_count: int = 0
         self.last_github_count: int = 0
@@ -294,7 +300,20 @@ class DigestStore:
             merged, event_stats = dedupe_events(in_window)
             self.last_event_stats = event_stats
             log_event_dedup(event_stats, debug=_event_debug_enabled())
-            merged_ids = [item.id for item in merged]
+            # Ranking runs last so it sees one entry per event, and before the
+            # write so the stored order *is* the reading order. It only reorders:
+            # every merged item is still linked, so nothing is dropped from the
+            # tail of the digest.
+            ranked_items, ranking, rank_stats = apply_ranking(
+                merged,
+                window_start=window.start,
+                window_end=window.end,
+                cluster_sizes=event_stats.cluster_sizes,
+                top_story_limit=top_story_limit(),
+            )
+            self.last_ranking_stats = rank_stats
+            merged_ids = [item.id for item in ranked_items]
+            rank_scores = {entry.news_id: entry.rank_score for entry in ranking}
             # Every collected article is stored, even one outside this window:
             # only the digest link is window-restricted, so an article is never
             # lost, it just stays unlinked until a window covers it.
@@ -317,6 +336,7 @@ class DigestStore:
                 github_ids=github_ids,
                 window_start=window.start,
                 window_end=window.end,
+                rank_scores=rank_scores,
             )
             session.commit()
             self.last_kept_previous = False

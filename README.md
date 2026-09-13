@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 10.5 - Original Article Content + Grounded Summary
+Phase 10.6 - Daily Ranking + Top Stories + Content Diversity
 
-今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
+今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**并标出 Top Stories。
 
 当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后可以阅读**原始语言的完整正文**。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
@@ -212,6 +212,12 @@ Candidates: 12
 Clusters: 12
 Duplicates merged: 0
 
+Ranking:
+Candidates: 12
+Top stories: 10
+Topics: 6
+Companies: 3
+
 GitHub Trending
 Fetched: X
 ...
@@ -259,6 +265,145 @@ AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 
 应用启动时会按需触发后台 refresh，并写入数据库。`GET /api/v1/daily` 读取数据库中最新的日报，不会每次请求都重新访问 RSS。
 
+## 日报排序 + Top Stories + 内容多样性
+
+一次 refresh 可能有几十条候选，日报是从上往下读的，所以顺序本身就决定了第一屏值不值得看。Phase 10.6 在写入前对最终新闻做一次**确定性排序**：
+
+```text
+抓取到的新闻
+      ↓
+去重（规则 + 事件）
+      ↓
+质量评分（rank_score）
+      ↓
+多样性调整（soft penalty）
+      ↓
+稳定排序
+      ↓
+Top Stories
+```
+
+排序完全由 `app/services/news_ranker.py` 计算，**不让 LLM 决定最终排名**：把 30 条新闻发给模型排序既不稳定、又贵、也无法测试。LLM 只提供 `importance_score`，作为其中一个输入信号。
+
+### rank_score 的组成
+
+每个信号归一化到 `0..1` 后按权重加权，乘 100 得到 `0..100` 的 `rank_score`：
+
+```text
+importance   0.60   LLM importance_score（核心信号，但不是唯一信号）
+source       0.14   官方一手 > 社区博客 > 科技媒体
+recency      0.10   在 issue window 内的相对位置（越新越高）
+content      0.06   正文完整度（web / rss_full > rss_summary fallback）
+cluster      0.10   同一事件被多个来源报道时的小幅加成（有上限）
+```
+
+- `importance_score` 缺失时按中性值（35）处理，不会直接判 0，也不会因此排到最前
+- 来源只是加权因素之一：来源层级差距刻意留小，媒体的大新闻仍然可以超过普通的官方新闻
+- 正文长度**只是弱信号**：长度会饱和，不会出现「文章越长越重要」
+- recency 只在同一窗口内比较，不会压过巨大的 importance 差距（不是「最新 = 第一名」）
+- 同一事件被多个来源报道时，`cluster size` 提供很小的加成，且封顶
+
+### topic 与 company 识别
+
+只做确定性关键词规则，不引入 embeddings、NER 模型或 LLM 分类，规则集中在 `app/services/news_topics.py`：
+
+```text
+topic    model_release / agent / research / open_source / product /
+         developer_tools / hardware / business / policy / other
+company  OpenAI / Anthropic / Google DeepMind / Meta / NVIDIA /
+         DeepSeek / Alibaba Qwen / Moonshot Kimi / Hugging Face / ...
+```
+
+- 规则按固定顺序求值，第一个命中者胜出；命中不了就是 `other` / 空
+- 更具体的 topic 排在前面，所以 `chip export ban` 归为 policy 而不是 hardware / business
+- 英文关键词按整词匹配，`meta` 不会命中 `metadata`，`api` 不会命中 `capital`
+- 分类只用于 diversity penalty，错了只会让日报多样性差一点，不会丢新闻
+
+### 多样性重排（soft penalty）
+
+先按 `rank_score` 排序，再从头贪心选择下一条：如果候选与前文重复公司 / topic / 来源，就扣除对应 penalty。
+
+```text
+company_repeat_penalty   3.0
+topic_repeat_penalty     2.0
+source_repeat_penalty    1.0
+max_diversity_penalty    8.0   ← 单条新闻最多被扣这么多
+```
+
+- 是 **soft penalty，不是硬限制**：不会出现「每家公司最多 1 条」，当天真有 3 条 OpenAI 大新闻时仍然可以全部进入 Top Stories
+- penalty 有上限，所以最多只会让一条新闻下降约一个 importance 档位，明显更重要的新闻依然排在前面
+- `other` 不算「相同 topic」：分类失败不应该把两条无关新闻互相推开
+- 贪心排序覆盖整份日报（不只是 Top 10），因此 `rank_score` 从上到下单调不增
+- 所有阈值集中在 `RankingSettings`，`rank_score` 的计算与调整都能被单测覆盖
+
+### Top Stories
+
+```text
+TOP_STORY_LIMIT = 10   （可用环境变量 TOP_STORY_LIMIT 覆盖）
+```
+
+- **不删除任何新闻**：排名靠后的新闻仍然保存在数据库，并且仍然关联到日报，只是标记为 `is_top_story = false`
+- `daily_digest_news` 增加 `rank` 与 `rank_score` 两列（`rank` 由 `position` 推导，`is_top_story` 读取时按当前 `TOP_STORY_LIMIT` 计算），因此调整 Top N 不需要重写历史
+- `rank` 放在关联表而不是 `news_articles`：同一条新闻在不同日报里的排名可能不同
+- 旧数据库通过既有的 `ALTER TABLE ADD COLUMN` 补列即可打开，不需要 Alembic
+
+### API
+
+`GET /api/v1/daily` 与 `GET /api/v1/daily/{date}` 的新闻顺序改为 rank 顺序，每条新闻新增：
+
+```json
+{
+  "rank": 1,
+  "rank_score": 71.5,
+  "is_top_story": true
+}
+```
+
+已有字段全部保留，`GET /api/v1/news/{id}` 不受影响。收藏 / 单独读取一条新闻时不带 rank（rank 只在某一份日报里有意义）。
+
+### Mobile 显示
+
+Mobile 没有重新设计页面，只是在现有日报页面上按 rank 顺序分组：
+
+```text
+今日 AI 日报
+
+重点新闻   Top 10
+  [Top 1] ...
+  ...
+
+更多新闻   其余 N 条
+  ...
+```
+
+- 分组逻辑在 `mobile/lib/digestSections.ts`（纯函数、可单测），只读取后端的 `is_top_story`，不在客户端重新决定谁重要
+- 所有新闻都会渲染，「更多新闻」不是丢弃，只是排在后面
+- 旧日报没有 `is_top_story` 时不做猜测，全部放进「更多新闻」，顺序保持后端返回的顺序
+- 新闻详情页的原文阅读逻辑不变
+
+### 可观察性
+
+refresh 默认打印一行汇总：
+
+```text
+Ranking:
+Candidates: 12
+Top stories: 10
+Topics: 6
+Companies: 3
+```
+
+设置 `AI_DAILY_DEBUG_RANKING=1` 可以看到每条新闻的分数构成：
+
+```bash
+cd backend
+AI_DAILY_DEBUG_RANKING=1 uv run python -m app.collectors.refresh
+```
+
+```text
+#1 score=71.5 importance=0.9 source=0.3 recency=0.7 content=0.9 cluster=0.0 diversity=0.0 topic=business company=OpenAI
+```
+
 ## 数据持久化
 
 - 当前使用 SQLite + SQLAlchemy 2.x，适合个人单用户场景
@@ -267,7 +412,7 @@ AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 - 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
 - 日报日期（`date` 主键）仍由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间（`published_at`）与窗口（`window_start` / `window_end`）统一以 UTC 保存
 - 一条新闻只属于一个窗口：`window_start < published_at <= window_end`，同一份日报的链接不会跨窗口重复
-- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
+- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段、Phase 10.6 新增的 `rank` / `rank_score` 都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
 
 存储内容：
 
@@ -275,7 +420,7 @@ AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 news_articles        新闻元数据 + 原始正文（稳定 ID upsert）
 github_projects      GitHub 项目（repo 稳定 ID upsert）
 daily_digests        每天的日报（date 主键，一天一条，含 UTC window_start / window_end）
-daily_digest_news    日报与新闻的排序关系
+daily_digest_news    日报与新闻的排序关系（含 position / rank / rank_score）
 daily_digest_github  日报与 GitHub 项目的排序关系
 favorites            收藏（item_type + item_id，单用户）
 refresh_runs         每次刷新执行记录（trigger / status / 计数 / 简短错误）
@@ -295,7 +440,7 @@ cd backend
 uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
 ```
 
-- 只读 `news_articles` 里的 `published_at`（UTC），按 issue window 重新判断归属，再重建 `daily_digest_news` 关联
+- 只读 `news_articles` 里的 `published_at`（UTC），按 issue window 重新判断归属，再重建 `daily_digest_news` 关联；重建后的顺序与正常 refresh 一致（同一套 ranking），并写回 `rank` / `rank_score`
 - 窗口优先取该日报已保存的 `window_start` / `window_end`；没有保存时按 `DAILY_REFRESH_HOUR` + `APP_TIMEZONE` 推导为 `(cutoff(D-1), cutoff(D)]`，例如 08:00 Asia/Shanghai 下 2026-09-12 的窗口是 `2026-09-11T00:00Z .. 2026-09-12T00:00Z`
 - 命令会把推导出的窗口写回该日报，方便下次继续沿用
 - 不重新调用 RSS 或 LLM，也不删除任何 `news_articles` 原始记录

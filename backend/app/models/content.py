@@ -23,6 +23,14 @@ class NewsItem(BaseModel):
     tags: list[str]
     url: str
     importance_score: int | None = None
+    # Where this story ranked in the digest it was returned with, plus the score
+    # that produced the order. Both are absent from an article read on its own
+    # (a favorite, a detail lookup), because a rank only means something inside
+    # one digest. ``is_top_story`` marks the leading stories the digest calls
+    # out; the rest are still returned so nothing is hidden.
+    rank: int | None = None
+    rank_score: float | None = None
+    is_top_story: bool | None = None
     # The original-language body. Excluded here on purpose: this model is also
     # the digest-list shape, and shipping every article body with the daily
     # digest would inflate the response the phone needs for a quick read.

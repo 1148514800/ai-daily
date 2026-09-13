@@ -416,6 +416,12 @@ class EventDedupStats:
     clusters: int = 0
     merged: int = 0
     decisions: list[EventDedupDecision] = field(default_factory=list)
+    # Every surviving entry's id mapped to the size of the cluster it represents.
+    # A story two independent outlets reported is corroborated, which the ranker
+    # treats as a small importance signal. Kept here because clustering is the
+    # only place that knows the answer, and re-deriving it later would mean
+    # clustering twice.
+    cluster_sizes: dict[str, int] = field(default_factory=dict)
 
     @property
     def reduced(self) -> bool:
@@ -486,6 +492,8 @@ def dedupe_events(
             continue
         emitted.add(winner.id)
         kept.append(winner)
+    for member_ids, winner in winners_by_id.items():
+        stats.cluster_sizes[winner.id] = stats.cluster_sizes.get(winner.id, 0) + 1
     return kept, stats
 
 

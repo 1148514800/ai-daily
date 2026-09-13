@@ -1,17 +1,11 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { DailyDigest, NewsCategory, NewsItem } from '../types';
+import type { DailyDigest, NewsItem } from '../types';
 import { formatLongDate } from '../lib/format';
+import { buildDigestSections } from '../lib/digestSections';
 import { colors, spacing, typography } from '../theme';
 import { NewsCard } from './NewsCard';
 import { SectionHeader } from './SectionHeader';
 import { UpdateHint } from './UpdateHint';
-
-const SECTIONS: { category: NewsCategory; title: string }[] = [
-  { category: 'highlight', title: '今日重点' },
-  { category: 'model', title: 'AI / 模型' },
-  { category: 'opensource', title: '开源项目' },
-  { category: 'tool', title: 'AI 工具' },
-];
 
 type DigestViewProps = {
   digest: DailyDigest;
@@ -20,6 +14,12 @@ type DigestViewProps = {
 };
 
 export function DigestView({ digest, onOpenNews, showFinishedHint = true }: DigestViewProps) {
+  // The server ranks the digest and marks the leading stories, so the split
+  // into 重点新闻 / 更多新闻 is a read of `is_top_story` rather than a second
+  // opinion. Every story is rendered: the lower-ranked ones are not dropped,
+  // they just sit under 更多新闻.
+  const sections = buildDigestSections(digest.news);
+
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -31,20 +31,19 @@ export function DigestView({ digest, onOpenNews, showFinishedHint = true }: Dige
       <Text style={styles.description}>{digest.description}</Text>
       <UpdateHint />
 
-      {SECTIONS.map((section) => {
-        const items = digest.news.filter((item) => item.category === section.category);
-        if (items.length === 0) {
-          return null;
-        }
-        return (
-          <View key={section.category}>
-            <SectionHeader title={section.title} caption={`${items.length} 条`} />
-            {items.map((item: NewsItem) => (
-              <NewsCard key={item.id} item={item} onPress={onOpenNews} />
-            ))}
-          </View>
-        );
-      })}
+      {sections.map((section) => (
+        <View key={section.key}>
+          <SectionHeader title={section.title} caption={section.caption} />
+          {section.items.map((item: NewsItem) => (
+            <NewsCard
+              key={item.id}
+              item={item}
+              onPress={onOpenNews}
+              showRank={section.key === 'top'}
+            />
+          ))}
+        </View>
+      ))}
 
       {showFinishedHint ? (
         <View style={styles.finished}>

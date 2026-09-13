@@ -13,6 +13,16 @@ export type NewsItem = {
   tags: string[];
   url: string;
   importance_score?: number | null;
+  /**
+   * Rank inside the digest this item was returned with, 1-based. Absent when an
+   * article is read on its own (a favorite), because a rank only means
+   * something relative to one day's list.
+   */
+  rank?: number | null;
+  /** The 0-100 score the rank was computed from. */
+  rank_score?: number | null;
+  /** True for the leading stories the digest calls out. The rest are still here. */
+  is_top_story?: boolean | null;
 };
 
 /**

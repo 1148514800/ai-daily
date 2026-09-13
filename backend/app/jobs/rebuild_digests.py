@@ -30,7 +30,7 @@ from app.db.session import init_db, new_session
 from app.models import NewsItem
 from app.services.digest_store import DIGEST_TITLE, EMPTY_DESCRIPTION
 from app.services.digest_window import DigestWindow, historical_window
-from app.services.llm.enrich import sort_news_items
+from app.services.news_ranker import apply_ranking
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +76,18 @@ def parse_dates(raw: str) -> list[str]:
 
 
 def articles_for_window(articles: list[NewsItem], window: DigestWindow) -> list[NewsItem]:
-    """Keep only articles inside ``window``, newest first."""
+    """Keep only the articles inside ``window``, in digest reading order.
+
+    A rebuild ranks with the same module a refresh uses, so a repaired day is
+    ordered exactly like one collected normally. Event dedup is not re-run: it
+    needs the full text of every report, and the linked set was already folded
+    when the digest was first written.
+    """
     matching = [item for item in articles if window.contains(item.published_at)]
-    # Same ordering rule as a normal refresh, so a rebuilt day reads the same.
-    return sort_news_items(matching)
+    ordered, ranking, _stats = apply_ranking(
+        matching, window_start=window.start, window_end=window.end
+    )
+    return ordered
 
 
 def _window_for(repository: DigestRepository, date: str) -> DigestWindow:
@@ -114,8 +122,12 @@ def rebuild_dates(dates: list[str]) -> list[RebuildResult]:
         for date in dates:
             window = _window_for(repository, date)
             before = [item.id for item in repository.get_news(date)]
-            selected = articles_for_window(articles, window)
+            matching = [item for item in articles if window.contains(item.published_at)]
+            selected, ranking, _stats = apply_ranking(
+                matching, window_start=window.start, window_end=window.end
+            )
             selected_ids = [item.id for item in selected]
+            rank_scores = {entry.news_id: entry.rank_score for entry in ranking}
             # The window is always written, even for an empty day, so later
             # refreshes continue from this cutoff instead of a fixed lookback.
             repository.save(
@@ -126,6 +138,7 @@ def rebuild_dates(dates: list[str]) -> list[RebuildResult]:
                 github_ids=repository.get_github_ids(date),
                 window_start=window.start,
                 window_end=window.end,
+                rank_scores=rank_scores,
             )
             results.append(
                 RebuildResult(date=date, window=window, before=before, after=selected_ids)

@@ -14,9 +14,11 @@ const CATEGORY_LABEL: Record<NewsItem['category'], string> = {
 type NewsCardProps = {
   item: NewsItem;
   onPress: (id: string) => void;
+  /** Show the digest rank, for the leading stories. */
+  showRank?: boolean;
 };
 
-export function NewsCard({ item, onPress }: NewsCardProps) {
+export function NewsCard({ item, onPress, showRank = false }: NewsCardProps) {
   return (
     <Pressable
       onPress={() => onPress(item.id)}
@@ -24,7 +26,10 @@ export function NewsCard({ item, onPress }: NewsCardProps) {
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
     >
       <View style={styles.metaRow}>
-        <Chip label={CATEGORY_LABEL[item.category]} tone={item.category === 'highlight' ? 'accent' : 'neutral'} />
+        <Chip
+          label={showRank && item.rank ? `Top ${item.rank}` : CATEGORY_LABEL[item.category]}
+          tone={showRank || item.category === 'highlight' ? 'accent' : 'neutral'}
+        />
         <Text style={styles.meta}>{item.source}</Text>
         <Text style={styles.dot}>·</Text>
         <Text style={styles.meta}>{formatTime(item.published_at)}</Text>
