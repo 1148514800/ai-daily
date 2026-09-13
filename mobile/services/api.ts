@@ -7,6 +7,7 @@ import type {
   NewsDetail,
   NewsItem,
   RefreshStatus,
+  SearchResponse,
 } from '../types';
 import { apiBaseUrl } from './config';
 
@@ -76,6 +77,29 @@ export function fetchDailyByDate(date: string): Promise<DailyDigest> {
 
 export function fetchDigests(): Promise<DigestSummary[]> {
   return request<DigestSummary[]>('/api/v1/digests');
+}
+
+/**
+ * Search the whole article archive.
+ *
+ * The query is sent as a parameter rather than interpolated into the path, and
+ * the backend does the matching, so the client never builds SQL or filters the
+ * archive itself.
+ */
+export function searchNews(
+  query: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (options.limit !== undefined) {
+    params.set('limit', String(options.limit));
+  }
+  if (options.offset !== undefined) {
+    params.set('offset', String(options.offset));
+  }
+  return request<SearchResponse>(`/api/v1/search?${params.toString()}`, {
+    fallbackMessage: '搜索失败',
+  });
 }
 
 /**

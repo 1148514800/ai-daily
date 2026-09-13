@@ -23,6 +23,7 @@ from app.config.ranking import top_story_limit
 from app.models import GitHubProject, NewsCategory, NewsDetail, NewsItem
 from app.pipelines.urls import canonicalize_url
 from app.services.news_topics import label_article
+from app.services.news_search import index_items
 
 # ``_label_news`` returns whatever it was given, so a NewsItem stays a NewsItem
 # and a NewsDetail stays a NewsDetail (with its body) instead of widening.
@@ -244,6 +245,10 @@ class NewsRepository:
                     row.content_fetched_at = _parse_datetime(item.content_fetched_at or "")
             touched += 1
         self.session.flush()
+        # The search index is derived from the rows above, so it is refreshed
+        # inside this transaction: a new or edited article is searchable exactly
+        # when the write commits, and a rollback leaves the index untouched.
+        index_items(self.session, items)
         return touched
 
     def get(self, news_id: str) -> NewsItem | None:
@@ -281,6 +286,9 @@ class NewsRepository:
         row.content_extraction_method = method
         row.content_fetched_at = fetched_at or utcnow()
         self.session.flush()
+        # The body just became searchable, so the index row is replaced with the
+        # text that was actually stored.
+        index_items(self.session, [_news_row_to_item(row)])
         return True
 
     def list_missing_content(

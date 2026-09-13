@@ -29,6 +29,35 @@ class FavoriteCreate(BaseModel):
     item_id: str
 
 
+class SearchResultItem(BaseModel):
+    """One search hit.
+
+    Carries what a result row shows — title, snippet, source, date, labels — and
+    deliberately **not** the article body: search can return dozens of rows, and
+    shipping every body would make the list as heavy as opening each article.
+    The body is still one tap away via ``GET /api/v1/news/{id}``.
+    """
+
+    news_id: str
+    title_cn: str
+    original_title: str
+    summary: str
+    source: str
+    published_at: str
+    # The digest this article was published in, or null when it never reached one
+    # (an article whose timestamp is still ahead of every window).
+    digest_date: str | None = None
+    topic: str = ""
+    company: str = ""
+    snippet: str = ""
+
+
+class SearchResponse(BaseModel):
+    query: str
+    total: int
+    items: list[SearchResultItem]
+
+
 class FavoriteNewsItem(BaseModel):
     item_type: str = "news"
     item: NewsItem

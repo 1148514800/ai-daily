@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 10.8 - Digest History + Date Navigation
+Phase 10.9 - Global News Search
 
-今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页分为**今日必看 / 重点新闻 / 更多动态**三层，并可以按日期回看**历史日报**。
+今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页分为**今日必看 / 重点新闻 / 更多动态**三层，可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
 
 当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后可以阅读**原始语言的完整正文**。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
@@ -365,6 +365,8 @@ TOP_STORY_LIMIT = 10   （可用环境变量 TOP_STORY_LIMIT 覆盖）
 
 `GET /api/v1/digests` 保留原有 `date` / `title` / `news_count` / `github_count`，Phase 10.8 追加 `top_story_count` 与 `window_start` / `window_end`（向后兼容，只增不改）。它**只返回计数**，永远不带新闻正文，历史列表因此保持轻量。
 
+Phase 10.9 新增 `GET /api/v1/search`（见 [全局新闻搜索](#全局新闻搜索phase-109)），已有接口全部保持不变。
+
 ### Mobile 显示
 
 首页分成三层，见 [今日日报首页](#今日日报首页phase-107)。
@@ -567,6 +569,154 @@ Phase 10.7 让首页值得读，Phase 10.8 解决「怎么方便地看昨天、�
 - 某日期没有日报：`GET /api/v1/daily/{date}` 404 → 「该日期没有日报。」（不是通用崩溃文案）
 - Backend 不可达：沿用「无法连接 AI Daily 服务」+「重新加载」
 - 日报存在但 `news = 0`：正常展示空状态，不崩溃（例如某天只抓到了 GitHub 项目）
+
+## 全局新闻搜索（Phase 10.9）
+
+解决「我以前看到过的那条 AI 新闻，现在怎么快速找到？」。搜索覆盖**全部已收录新闻**，不只是今天或某一份日报。不改采集、不改 event dedup、不改正文提取、不改 daily ranking、不改 issue window。
+
+### 后端选择（FTS5 / LIKE）
+
+搜索后端在启动时**探测**而不是假设，按能力从高到低选择：
+
+```text
+Search backend: FTS5 (trigram)
+Search backend: FTS5 (unicode61)
+Search backend: LIKE fallback
+```
+
+1. `fts5-trigram`：FTS5 + trigram tokenizer。索引每三个字符，所以查询就是**子串匹配**——中文不需要分词，英文也能命中单词中间片段。
+2. `fts5`：FTS5 但没有 trigram。按 token 匹配，对以空格分词的语言有效；中文分词不可用，因此非 ASCII 词走 `LIKE`。
+3. `like`：完全没有 FTS5。全部用 `LIKE`，但仍在 SQL 里执行，不做 Python 全表扫描。
+
+没有 FTS5 时 **Backend 仍然能正常启动**：搜索退化为 `LIKE`，只有搜索能力降级，不影响日报、历史、详情、收藏。
+
+### trigram 的两个真实限制
+
+- **少于 3 个字符的词无法用 trigram 表达**（trigram 的定义如此）。`模型`、`AI`、`V4` 这类词改由同一条 SQL 里的 `LIKE` 处理，**不会**被丢掉——否则短查询会退化成「匹配全部」而不是缩小结果。
+- **trigram 默认大小写不敏感**，`DeepSeek` / `deepseek` / `DEEPSEEK` 等价。
+
+### 索引
+
+独立 FTS 表 `news_search_fts`，字段为：
+
+```text
+news_id (UNINDEXED)  title_cn  title_original  summary
+why_it_matters       content_original            source  company  topic
+```
+
+- `content_original` 是 Phase 10.5 已清洗的纯文本，索引不复制原始 HTML
+- `company` / `topic` 也建索引，所以能直接搜分类；但**返回给客户端时按文章文本重新计算**，规则变更对老结果立即生效
+
+### 索引同步
+
+索引是派生数据，跟着写入一起更新（在同一个事务里，回滚不会留下脏索引）：
+
+```text
+news_articles  --upsert_many-->  index 更新（新新闻 / 摘要变化）
+news_articles  --set_content-->  index 更新（正文 backfill 后立即能搜到）
+```
+
+- 按 `news_id` **替换**而不是追加，所以同一篇文章永远不会出现两条索引
+- 已有数据库第一次启用时由启动流程自动补建，用户不需要删库重建
+- 写入时若还没有 FTS 表，索引写入是 no-op，不会报错
+
+### Rebuild 命令
+
+```bash
+cd backend
+uv run python -m app.jobs.rebuild_search_index
+```
+
+```text
+Search backend: FTS5 (trigram)
+
+Search index rebuilt
+Articles: 1234
+Indexed: 1234
+```
+
+- 幂等，可安全重复执行
+- 只读 `news_articles`，只写索引：不抓 RSS、不调 LLM、不删文章、**不修改 digest 关联**
+
+### Search API
+
+```text
+GET /api/v1/search?q=DeepSeek&limit=20&offset=0
+```
+
+```json
+{
+  "query": "DeepSeek",
+  "total": 12,
+  "items": [
+    {
+      "news_id": "...",
+      "title_cn": "...",
+      "original_title": "...",
+      "summary": "...",
+      "source": "DeepSeek",
+      "published_at": "2026-09-10T02:00:00+00:00",
+      "digest_date": "2026-09-10",
+      "topic": "model_release",
+      "company": "DeepSeek",
+      "snippet": "…DeepSeek 正式发布 V4.1…"
+    }
+  ]
+}
+```
+
+- **不返回 `content_original`**：搜索可能返回几十条，列表必须轻量；正文点击后走 `GET /api/v1/news/{id}`
+- `limit` 上限 50（`limit` / `offset` 由 FastAPI 校验，越界返回 422）
+- 空 query 或缺少 query：返回 200 + 空结果（前端不必特判），**不会**默认吐出全部历史新闻
+- `digest_date` 取 `daily_digest_news` 关联；文章还没进入任何日报（例如时间戳仍在未来的文章）时为 `null`，不伪造日期
+
+### 搜索排序
+
+搜索排序与 Daily Ranking 是**两套不同语义**，不复用 `news_ranker.py`：
+
+```text
+文本相关度（FTS BM25） > 发布时间（弱 tie breaker）
+```
+
+BM25 权重按列配置，标题命中明显高于正文深处命中：
+
+```text
+title_cn / title_original  10
+summary                     5
+source / company / topic   3~4
+content_original            1
+why_it_matters              2
+```
+
+`importance_score` **不参与**搜索排序：搜索结果要"和搜的词相关"，而不是重跑一次日报排序。
+
+### Snippet
+
+围绕命中词截取（命中词前后各取一段，最多 200 字符），优先取含命中词的 `summary`，否则取正文，并加 `…` 标明省略。没有命中词的候选会被跳过，避免给出与查询无关的开头段落；无命中时兜底给正文开头，仍返回纯文本（无 HTML、无换行）。
+
+### Mobile 搜索页
+
+入口在 Today 与「历史」页（不改 TabBar 结构），进入后是一个独立的搜索页：
+
+```text
+搜索 AI 新闻
+
+[ 搜索 DeepSeek / Agent / GPT-6… ]
+
+搜索结果 12 条
+
+模型 | DeepSeek · 9月10日
+DeepSeek 发布 V4.1
+…DeepSeek 正式发布 V4.1 Flash 模型…
+```
+
+- 输入为空：显示「搜索历史 AI 新闻」，**不自动拉全部历史新闻**
+- 输入过程中 300ms debounce，避免每敲一个字符发一次请求
+- query 改变时旧响应不会覆盖新结果（每个请求带自己的 query，回来时如果已不是当前 query 就丢弃）
+- 没有结果：「没有找到相关内容」
+- Backend 失败：沿用「无法连接 AI Daily 服务」+「重新尝试」
+- 点击结果进入**现有** `NewsDetailScreen`，中文摘要 / Why it matters / 原语言正文 / 查看原文 / 收藏全部照旧
+- 本阶段不做搜索历史（不写 SQLite、不写 AsyncStorage）
 
 ## 数据持久化
 

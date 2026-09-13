@@ -13,6 +13,8 @@ from app.api.schemas import (
     PushTestResult,
     RefreshRunSummary,
     RefreshStatus,
+    SearchResponse,
+    SearchResultItem,
     SystemStatus,
 )
 from app.config.push import push_enabled
@@ -32,6 +34,7 @@ from app.jobs.daily_refresh import is_refresh_running
 from app.jobs.scheduler import next_run_at, scheduler_state
 from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
 from app.services.digest_store import store
+from app.services.news_search import DEFAULT_LIMIT, MAX_LIMIT
 from app.services.push import ExpoPushClient, PushMessage
 from app.services.push.service import NOTIFICATION_TITLE
 
@@ -90,6 +93,40 @@ def list_github_projects(date: str | None = Query(default=None)) -> list[GitHubP
     if target is None:
         return []
     return store.get_github_projects(target)
+
+
+@router.get("/search", response_model=SearchResponse)
+def search_news(
+    q: str = Query(default="", description="search terms"),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> SearchResponse:
+    """Search every stored article, most relevant first.
+
+    An empty query is an empty result rather than an error, so the client can
+    send whatever is in the box without special-casing it. Rows never include the
+    article body.
+    """
+    results = store.search(q, limit=limit, offset=offset)
+    return SearchResponse(
+        query=results.query,
+        total=results.total,
+        items=[
+            SearchResultItem(
+                news_id=hit.news_id,
+                title_cn=hit.title_cn,
+                original_title=hit.original_title,
+                summary=hit.summary,
+                source=hit.source,
+                published_at=hit.published_at,
+                digest_date=hit.digest_date,
+                topic=hit.topic,
+                company=hit.company,
+                snippet=hit.snippet,
+            )
+            for hit in results.items
+        ],
+    )
 
 
 @router.get("/favorites", response_model=list[FavoriteResponse])

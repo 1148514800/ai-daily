@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.8 - Digest History + Date Navigation
+Current Phase: Phase 10.9 - Global News Search
 
 Completed:
 - 项目初始化
@@ -32,6 +32,8 @@ Completed:
 - topic 中文标签与人类友好时间：API 返回 topic / company，客户端只做映射；相对时间只在当前日报使用，历史日报一律绝对时间（Phase 10.7）
 - 历史日报与日期导航：新增「历史」入口与列表（只显示真实存在的日报），看某天日报时可在**真实日报**之间前后切换，API /digests 补充 top_story_count 与 window（Phase 10.8）
 - digest 客户端内存 cache（date -> DailyDigest，仅进程内），9-13 → 9-12 → 9-13 往返不再重复请求；后端 SQLite 仍是唯一 source of truth（Phase 10.8）
+- 全局新闻搜索：SQLite FTS5（优先 trigram）全文索引覆盖全部已收录新闻，标题 / 中文摘要 / 英文原文 / source / company / topic 都可搜（Phase 10.9）
+- 搜索后端启动时探测，FTS5 不可用自动退化为 SQL LIKE；搜索不可用绝不会导致 Backend 启动失败（Phase 10.9）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -72,6 +74,17 @@ Current Architecture:
 - Today 复用 GET /api/v1/daily 既有的「有今天用今天、没有用最新一份」语义，客户端只决定标题（今日 / YYYY年M月D日）与是否展示 fallback 提示，不伪造今天日报
 - 历史日报是 snapshot：只读 SQLite，不触发采集 / LLM，GitHub 也取当天保存的那批
 - 客户端 cache（mobile/lib/digestCache.ts）只在内存里，key 为 date，命中不发请求；失败结果不缓存，后端 SQLite 仍是唯一 source of truth
+- 搜索索引（app/services/news_search.py）：独立 FTS5 表 news_search_fts，字段 news_id(UNINDEXED) / title_cn / title_original / summary / why_it_matters / content_original / source / company / topic
+- 搜索后端探测顺序：fts5-trigram -> fts5(unicode61) -> LIKE；探测用独立连接建临时表，不污染调用方事务；没有 FTS5 时 search_backend() 返回 like，功能退化但不报错
+- trigram 索引每三个字符，所以中文无需分词、英文可子串命中；少于 3 字符的词（模型 / AI / V4）无法用 trigram 表达，改由同一条 SQL 里的 LIKE 处理，绝不丢弃
+- 查询词全部包成 FTS5 字符串字面量（内部双引号翻倍），所以 " ' - ( ) * : 等特殊字符都不会造成 SQL error 或 500
+- LIKE fallback 会把 % 与 _ 转义为字面量（ESCAPE），并照样在 SQL 里完成，不做 Python 全表扫描
+- 排序只用 BM25（标题权重最高）+ 发布时间兜底，不复用 news_ranker，也不看 importance_score
+- snippet 围绕命中词截取（优先含词的 summary，其次正文），最多 200 字符，纯文本；没有命中词的候选会被跳过
+- 索引用 news_id 替换而不是追加；写入发生在 upsert_many / set_content 的同一个事务里，回滚不留脏索引
+- 已有库第一次启用时由启动流程补建索引（app/main.py -> ensure_index）；init_db 只建表不填充，保持打开数据库的开销很小
+- rebuild 命令：uv run python -m app.jobs.rebuild_search_index（幂等，只读 news_articles，不碰 digest 关联，不调 RSS / LLM）
+- 搜索结果不返回 content_original；digest_date 取 daily_digest_news 关联，未进日报的文章为 null
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -165,8 +178,21 @@ Not in scope（Phase 10.8）:
 - 未改 issue window、Scheduler 08:00、Mobile API contract、收藏、Push、本地部署
 - 未改动数据库表结构（history 只是把已有 digest 读出来）
 
+Not in scope（Phase 10.9）:
+- 未引入 embedding / 向量数据库 / semantic search / RAG / AI 问答 / query rewriting / 自动翻译 query
+- 未做用户画像、个性化搜索、搜索历史同步（当前页面生命周期也不保存 query）
+- 未新增新闻源，未调整 ranking 参数，未做云部署
+- 未改 issue window、Scheduler 08:00、Mobile API contract、收藏、Push、本地部署
+
 Known Issues:
 - 真机（Android APK）验收未在本环境执行：当前机器没有 Android SDK（ANDROID_HOME / adb 均缺失），也没有连接的设备，只能完成 tsc + 单元测试 + 真实 API payload 验证
+- 搜索索引表由 create_all / ensure_table 管理，不在 SQLite 备份或 ALTER 补列的覆盖范围内：它随时可以用 rebuild_search_index 重建，所以不需要备份
+- 少于 3 字符的查询走 LIKE，因此在大库上比 trigram MATCH 慢；当前量级（个人单用户）完全够用，若文章数上万需要改成分词或专门的前缀索引
+- 搜索是词面子串匹配，不做同义词 / 词形还原：搜「发布」不会命中「推出」，搜 `release` 不会命中 `released` 之外的变形
+- 多词查询是 AND 语义（所有词都要出现），没有做 OR / 短语 / 排除语法
+- snippet 按第一个出现的词截取，多个命中词时只围绕最早的那个
+- 搜索结果没有分页 UI：Mobile 只请求第一页（20 条），更多结果目前靠收窄关键词
+- FTS5 不可用时（极旧的 Python 或未编译 FTS5 的 SQLite）搜索退化为全表 LIKE，日志会明确打印 Search backend: LIKE fallback
 - digest cache 只活在 App 进程内：杀掉进程或切后端地址后第一次打开仍会请求一次，没有持久缓存，也没有跨设备的离线阅读
 - 历史列表一次返回全部日期，没有分页；当前量级（个人单用户、一天一条）足够，若积累到数千天需要再加分页
 - 历史日报的 GitHub 区块来自当天保存的关联；如果那天 GitHub 采集失败，历史日报里就没有 GitHub 内容（不会用今天的 Trending 补）

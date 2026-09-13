@@ -99,6 +99,25 @@ def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     _add_missing_sqlite_columns(engine)
+    _ensure_search_index(engine)
+
+
+def _ensure_search_index(engine: Engine) -> None:
+    """Create or upgrade the full-text index alongside the regular tables.
+
+    Schema only: the index is created here (and replaced if the available
+    tokenizer improved), but filling it is left to startup and to the rebuild
+    command, so opening the database stays cheap. A build without FTS5 simply
+    has no index and search falls back to SQL ``LIKE``.
+    """
+    try:
+        from app.services.news_search import ensure_table
+
+        ensure_table(engine)
+    except Exception:  # a search index must never block the app from starting
+        import logging
+
+        logging.getLogger(__name__).warning("could not prepare the search index", exc_info=True)
 
 
 def _add_missing_sqlite_columns(engine: Engine) -> None:

@@ -26,6 +26,7 @@ from app.services.news_ranker import (
     RankingStats,
     apply_ranking,
 )
+from app.services.news_search import SearchResults, search_articles
 from app.services.llm import EnrichmentStats, enrich_articles
 from app.services.article_extractor import (
     ExtractionSettings,
@@ -450,6 +451,14 @@ class DigestStore:
         session = new_session()
         try:
             return DigestRepository(session).list_summaries()
+        finally:
+            session.close()
+
+    def search(self, query: str, *, limit: int | None = None, offset: int = 0) -> SearchResults:
+        """Search every stored article. Reads only from SQLite."""
+        session = new_session()
+        try:
+            return search_articles(session, query, limit=limit, offset=offset)
         finally:
             session.close()
 

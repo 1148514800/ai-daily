@@ -90,6 +90,31 @@ export type DigestSummary = {
   window_end?: string | null;
 };
 
+/**
+ * One search hit. Deliberately has no article body: the list stays light and
+ * the full original text is fetched from `GET /api/v1/news/{id}` on tap.
+ */
+export type SearchResultItem = {
+  news_id: string;
+  title_cn: string;
+  original_title: string;
+  summary: string;
+  source: string;
+  published_at: string;
+  /** The digest it was published in, or null when it never reached one. */
+  digest_date?: string | null;
+  topic?: string | null;
+  company?: string | null;
+  /** Short excerpt around the match, already plain text. */
+  snippet: string;
+};
+
+export type SearchResponse = {
+  query: string;
+  total: number;
+  items: SearchResultItem[];
+};
+
 export type FavoriteItemType = 'news' | 'github';
 
 export type Favorite = {

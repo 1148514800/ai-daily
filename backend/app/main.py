@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -6,8 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.config.env import load_dotenv
-from app.db.session import init_db
+from app.db.session import get_engine, init_db
 from app.jobs.scheduler import shutdown_scheduler, start_scheduler
+from app.services.news_search import BACKEND_LIKE, backend_label, ensure_index
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -17,6 +21,13 @@ APP_ENV = os.getenv("APP_ENV", "development")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    # Existing articles have to become searchable the first time this phase runs,
+    # which happens here rather than in init_db so the (potentially large) fill
+    # is explicit. Without FTS5 this just reports the fallback and moves on.
+    stats = ensure_index(get_engine())
+    logger.info("Search backend: %s", backend_label(stats.backend))
+    if stats.backend != BACKEND_LIKE:
+        logger.info("search index: articles=%s indexed=%s", stats.articles, stats.indexed)
     # Startup must stay fast: the catch-up run is queued as a background job so
     # the API can serve the already persisted digest immediately.
     start_scheduler()

@@ -8,9 +8,11 @@ import { colors, radius, spacing, typography } from '../theme';
 
 type HistoryScreenProps = {
   onOpenDigest: (date: string) => void;
+  /** Open the search screen, which covers every stored digest. */
+  onOpenSearch: () => void;
 };
 
-export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
+export function HistoryScreen({ onOpenDigest, onOpenSearch }: HistoryScreenProps) {
   const { status, summaries, error, reload } = useDigestHistory();
 
   return (
@@ -29,6 +31,13 @@ export function HistoryScreen({ onOpenDigest }: HistoryScreenProps) {
             <Text style={styles.kicker}>往期回顾</Text>
             <Text style={styles.title}>历史日报</Text>
             <Text style={styles.description}>点击某一天，查看当天的日报内容。</Text>
+            <Pressable
+              onPress={onOpenSearch}
+              android_ripple={{ color: colors.overlay }}
+              style={({ pressed }) => [styles.searchRow, pressed && styles.pressed]}
+            >
+              <Text style={styles.searchLabel}>搜索全部历史新闻 →</Text>
+            </Pressable>
 
             {summaries.map((digest) => (
               <Pressable
@@ -75,6 +84,19 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.sm,
     marginBottom: spacing.lg,
+  },
+  searchRow: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    marginBottom: spacing.md,
+  },
+  searchLabel: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '500',
+    color: colors.accent,
   },
   card: {
     backgroundColor: colors.surface,

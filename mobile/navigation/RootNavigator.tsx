@@ -6,6 +6,7 @@ import { DigestScreen } from '../screens/DigestScreen';
 import { GitHubScreen } from '../screens/GitHubScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { NewsDetailScreen } from '../screens/NewsDetailScreen';
+import { SearchScreen } from '../screens/SearchScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { TodayScreen } from '../screens/TodayScreen';
 import { colors } from '../theme';
@@ -14,6 +15,7 @@ import type { TabKey } from '../types';
 type Route =
   | { name: 'tabs' }
   | { name: 'news'; id: string }
+  | { name: 'search' }
   | { name: 'digest'; date: string };
 
 export function RootNavigator() {
@@ -55,6 +57,8 @@ export function RootNavigator() {
   let screen = null;
   if (current.name === 'news') {
     screen = <NewsDetailScreen newsId={current.id} onBack={pop} />;
+  } else if (current.name === 'search') {
+    screen = <SearchScreen onBack={pop} onOpenNews={(id) => push({ name: 'news', id })} />;
   } else if (current.name === 'digest') {
     screen = (
       <DigestScreen
@@ -70,7 +74,12 @@ export function RootNavigator() {
   } else if (tab === 'favorites') {
     screen = <FavoritesScreen onOpenNews={(id) => push({ name: 'news', id })} />;
   } else if (tab === 'history') {
-    screen = <HistoryScreen onOpenDigest={(date) => push({ name: 'digest', date })} />;
+    screen = (
+      <HistoryScreen
+        onOpenDigest={(date) => push({ name: 'digest', date })}
+        onOpenSearch={() => push({ name: 'search' })}
+      />
+    );
   } else if (tab === 'settings') {
     screen = <SettingsScreen />;
   } else {
@@ -78,6 +87,7 @@ export function RootNavigator() {
       <TodayScreen
         onOpenNews={(id) => push({ name: 'news', id })}
         onOpenHistory={() => setTab('history')}
+        onOpenSearch={() => push({ name: 'search' })}
       />
     );
   }

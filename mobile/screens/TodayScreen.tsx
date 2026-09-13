@@ -13,9 +13,11 @@ type TodayScreenProps = {
   onOpenNews: (id: string) => void;
   /** Switch to the history tab, the entry point for reading past digests. */
   onOpenHistory: () => void;
+  /** Open the search screen for the whole archive. */
+  onOpenSearch: () => void;
 };
 
-export function TodayScreen({ onOpenNews, onOpenHistory }: TodayScreenProps) {
+export function TodayScreen({ onOpenNews, onOpenHistory, onOpenSearch }: TodayScreenProps) {
   const { status, data, error, reload } = useAsyncResource(fetchTodayDaily);
   // /daily already resolves "today's digest, or the latest one when today has
   // not been generated yet". The view only decides how to label the result, so
@@ -56,6 +58,9 @@ export function TodayScreen({ onOpenNews, onOpenHistory }: TodayScreenProps) {
                 ) : null}
                 <Pressable onPress={onOpenHistory} hitSlop={8} style={styles.historyLink}>
                   <Text style={styles.historyLinkText}>历史日报 →</Text>
+                </Pressable>
+                <Pressable onPress={onOpenSearch} hitSlop={8} style={styles.historyLink}>
+                  <Text style={styles.historyLinkText}>搜索历史新闻 →</Text>
                 </Pressable>
               </>
             }
