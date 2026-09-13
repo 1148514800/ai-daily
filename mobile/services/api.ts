@@ -4,6 +4,7 @@ import type {
   Favorite,
   FavoriteItemType,
   GitHubProject,
+  NewsDetail,
   NewsItem,
   RefreshStatus,
 } from '../types';
@@ -77,8 +78,12 @@ export function fetchDigests(): Promise<DigestSummary[]> {
   return request<DigestSummary[]>('/api/v1/digests');
 }
 
-export function fetchNews(newsId: string): Promise<NewsItem> {
-  return request<NewsItem>(`/api/v1/news/${encodeURIComponent(newsId)}`);
+/**
+ * The detail endpoint returns the original article body on top of the list
+ * fields, so the detail screen can show the article as published.
+ */
+export function fetchNews(newsId: string): Promise<NewsDetail> {
+  return request<NewsDetail>(`/api/v1/news/${encodeURIComponent(newsId)}`);
 }
 
 export function fetchGithubProjects(date?: string): Promise<GitHubProject[]> {

@@ -6,7 +6,7 @@ from app.collectors.rss import CollectResult, collect_all_sources
 from app.config.timezone import digest_date_for, today_digest_date
 from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
 from app.db.session import new_session
-from app.models import DailyDigest, GitHubProject, NewsItem
+from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.normalize import news_item_from_raw
 from app.services.digest_window import (
@@ -17,17 +17,30 @@ from app.services.digest_window import (
 )
 from app.services.event_dedup import EventDedupStats, dedupe_events, log_event_dedup
 from app.services.llm import EnrichmentStats, enrich_articles
+from app.services.article_extractor import (
+    ExtractionSettings,
+    ExtractionStats,
+    extract_articles,
+    load_extraction_settings,
+    log_extraction,
+)
 
 logger = logging.getLogger(__name__)
 
 DIGEST_TITLE = "今日 AI 日报"
 EMPTY_DESCRIPTION = "今天还没有新的 AI 资讯。"
 EVENT_DEBUG_ENV = "AI_DAILY_DEBUG_EVENT_DEDUP"
+EXTRACTION_DEBUG_ENV = "AI_DAILY_DEBUG_EXTRACTION"
 
 
 def _event_debug_enabled() -> bool:
     """Per-cluster event dedup logging, opt-in so default logs stay short."""
     return os.getenv(EVENT_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extraction_debug_enabled() -> bool:
+    """Per-article extraction logging, opt-in so default logs stay short."""
+    return os.getenv(EXTRACTION_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _iso(moment: datetime | None) -> str | None:
@@ -72,6 +85,7 @@ class DigestStore:
         self.last_reports: list[CollectResult] = []
         self.last_recent_count: int = 0
         self.last_llm_stats: EnrichmentStats = EnrichmentStats()
+        self.last_extraction_stats: ExtractionStats = ExtractionStats()
         self.last_event_stats: EventDedupStats = EventDedupStats()
         self.last_saved_date: str | None = None
         self.last_news_count: int = 0
@@ -83,12 +97,18 @@ class DigestStore:
         window: DigestWindow,
         now: datetime | None = None,
         fetch_text=None,
+        fetch_page=None,
+        extraction_settings: ExtractionSettings | None = None,
     ) -> tuple[list[NewsItem], list[CollectResult]]:
-        """Collect, filter, dedupe, and enrich the news for one issue window.
+        """Collect, filter, dedupe, extract, and enrich the news for one window.
 
         Membership is decided by ``window_start < published_at <= window_end``,
         which already excludes future timestamps because ``window_end`` is never
         later than the refresh time. Does not touch the database.
+
+        Order matters: extraction runs after the rule dedup so a page is fetched
+        once per surviving article, and before enrichment so the LLM summarises
+        the real body instead of a feed teaser.
         """
         current = now or now_utc()
         if current.tzinfo is None:
@@ -134,15 +154,30 @@ class DigestStore:
             )
         deduped = dedupe_articles(in_window)
 
+        # Original-language article bodies, fetched once per article. A failure
+        # here only costs the body: the article continues with its RSS summary.
         try:
-            news_items, llm_stats = enrich_articles(deduped)
+            extracted, extraction_stats = extract_articles(
+                deduped,
+                settings=extraction_settings or load_extraction_settings(),
+                fetch=fetch_page,
+            )
+        except Exception:
+            logger.exception("article extraction failed; using RSS summaries")
+            extracted = deduped
+            extraction_stats = ExtractionStats(candidates=len(deduped), failed=len(deduped))
+        self.last_extraction_stats = extraction_stats
+        log_extraction(extraction_stats, debug=_extraction_debug_enabled())
+
+        try:
+            news_items, llm_stats = enrich_articles(extracted)
         except Exception:
             logger.exception("llm enrichment failed; using original RSS content")
-            news_items = [news_item_from_raw(article) for article in deduped]
+            news_items = [news_item_from_raw(article) for article in extracted]
             llm_stats = EnrichmentStats(
-                candidates=len(deduped),
-                fallback=len(deduped),
-                failed=len(deduped),
+                candidates=len(extracted),
+                fallback=len(extracted),
+                failed=len(extracted),
             )
         self.last_llm_stats = llm_stats
         logger.info(
@@ -161,6 +196,8 @@ class DigestStore:
         now: datetime | None = None,
         fetch_text=None,
         github_projects: list[GitHubProject] | None = None,
+        fetch_page=None,
+        extraction_settings: ExtractionSettings | None = None,
     ) -> list[CollectResult]:
         """Collect news and persist the current digest."""
         current = now or now_utc()
@@ -169,7 +206,13 @@ class DigestStore:
         date = digest_date_for(current)
 
         window = self.resolve_window(date, current)
-        news_items, reports = self.collect_news(window, current, fetch_text)
+        news_items, reports = self.collect_news(
+            window,
+            current,
+            fetch_text,
+            fetch_page=fetch_page,
+            extraction_settings=extraction_settings,
+        )
         self.persist(
             date=date, window=window, news_items=news_items, github_projects=github_projects
         )
@@ -367,6 +410,13 @@ class DigestStore:
         session = new_session()
         try:
             return NewsRepository(session).get(news_id)
+        finally:
+            session.close()
+
+    def get_news_detail(self, news_id: str) -> NewsDetail | None:
+        session = new_session()
+        try:
+            return NewsRepository(session).get_detail(news_id)
         finally:
             session.close()
 

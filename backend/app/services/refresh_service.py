@@ -29,6 +29,7 @@ def refresh_all(
     *,
     now: datetime | None = None,
     fetch_text=None,
+    fetch_page=None,
     fetch_trending=None,
     github_client=None,
     enrich=None,
@@ -43,7 +44,7 @@ def refresh_all(
     date = digest_date_for(current)
     window = store.resolve_window(date, current)
 
-    news_items, reports = store.collect_news(window, current, fetch_text)
+    news_items, reports = store.collect_news(window, current, fetch_text, fetch_page=fetch_page)
     github_stats = github_store.refresh(
         fetch_text=fetch_trending,
         github_client=github_client,

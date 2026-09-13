@@ -23,6 +23,27 @@ class NewsItem(BaseModel):
     tags: list[str]
     url: str
     importance_score: int | None = None
+    # The original-language body. Excluded here on purpose: this model is also
+    # the digest-list shape, and shipping every article body with the daily
+    # digest would inflate the response the phone needs for a quick read.
+    # ``NewsDetail`` re-declares the fields so the detail endpoint returns them.
+    content_original: str = Field(default="", exclude=True)
+    content_language: str = Field(default="", exclude=True)
+    content_extraction_method: str = Field(default="", exclude=True)
+    content_fetched_at: str | None = Field(default=None, exclude=True)
+
+
+class NewsDetail(NewsItem):
+    """One article with its original body, for the detail view.
+
+    Every list field is inherited unchanged, so the detail response stays a
+    superset of the list item and older clients keep working.
+    """
+
+    content_original: str = ""
+    content_language: str = ""
+    content_extraction_method: str = ""
+    content_fetched_at: str | None = None
 
 
 class GitHubProject(BaseModel):

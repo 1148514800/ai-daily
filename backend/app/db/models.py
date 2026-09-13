@@ -27,6 +27,14 @@ class NewsArticleRow(Base):
     url: Mapped[str] = mapped_column(Text, default="")
     canonical_url: Mapped[str] = mapped_column(Text, default="")
     importance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Original-language article body, extracted once and kept whole. It is never
+    # translated: title_cn / summary / why_it_matters are separate Chinese fields
+    # produced by the LLM, and neither side overwrites the other.
+    content_original: Mapped[str] = mapped_column(Text, default="")
+    content_language: Mapped[str] = mapped_column(String(16), default="")
+    # How the body was obtained: rss_full / web / rss_summary / none.
+    content_extraction_method: Mapped[str] = mapped_column(String(32), default="")
+    content_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

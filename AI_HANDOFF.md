@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.4 - Cross-source Event Dedup
+Current Phase: Phase 10.5 - Original Article Content + Grounded Summary
 
 Completed:
 - 项目初始化
@@ -21,11 +21,31 @@ Completed:
 - 日报改为 Issue Window（Since Last Successful Digest）：daily_digests 新增 window_start / window_end（UTC），窗口为 (window_start, window_end]（Phase 10.2）
 - 扩展 AI 信息源：从 3 个 RSS 升级为 11 个来源（8 官方 + 1 社区博客 + 2 媒体），新增 HTML 采集器与统一 source 配置（Phase 10.3）
 - 跨来源事件去重：规则去重之后新增事件级去重，同一事件的多个来源只保留一条主新闻（Phase 10.4）
+- 原始正文提取：统一提取 pipeline（RSS 全文 → 网页正文 → RSS 摘要），保留原语言，正文与 LLM 输入分离（Phase 10.5）
+- LLM Grounded Summary：prompt 明确禁止补充正文之外的事实，PROMPT_VERSION 升到 v2（Phase 10.5）
+- Article Detail API + Mobile 新闻详情页：详情页展示原语言正文，不翻译（Phase 10.5）
+- 历史文章正文 backfill 一次性命令（Phase 10.5）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite -> event dedup -> daily_digest_news
+- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> daily_digest_news
+- 两层内容：列表只有中文标题 / 摘要 / Why it matters / importance_score（NewsItem，正文字段 exclude），详情额外返回原始正文（NewsDetail）
+- 正文提取（app/services/article_extractor.py）：所有来源共用一套 pipeline，不做 11 个 parser
+- 正文来源优先级：RSS/Atom 自带完整正文（content:encoded / Atom content，长度 >= rss_full_min_chars）-> 抓取文章网页并清洗 -> RSS description / summary 兜底
+- 正文清洗：保留 paragraph / heading / list / quote（带轻量标记），过滤 navbar / footer / cookie / 相关推荐 / 分享 / 广告 / script / style / 菜单 / 侧边栏 / 分页 / 标签 / 作者卡片
+- 干扰判断只看标签名、class、id、role，不看正文文字（正文提到 cookie 不会误删）；class/id 按整词匹配，避免 `nav` 命中 `navigation-with-keyboard`
+- 正文容器在移除干扰元素后取文本最多的候选，避免选中页面里的相关推荐小 <article> 卡片
+- 正文语言：content_original 永远保持原语言，绝不翻译/改写；title_cn / summary / why_it_matters / importance_score 是另一组独立字段
+- 数据库保存完整正文 content_original；送给 LLM 的只是按 LLM_CONTENT_MAX_CHARS（默认 6000）裁剪的视图，上限集中在 app/services/llm/settings.py
+- 正文缓存以 canonical URL 为 key（backend/.cache/articles，可用 ARTICLE_CACHE_DIR 覆盖）；只缓存成功结果，失败会在下次 refresh 重试
+- 网络容错：timeout / User-Agent / redirect 上限，非 2xx、非 HTML、空正文都回退 RSS 摘要，单篇异常隔离，一个页面失败不会让 refresh 失败
+- Grounded summary：prompt 只允许使用正文事实，禁止补充正文之外的事实/数字/人名，禁止根据模型记忆猜测；正文可以是英文但输出必须是中文
+- LLM 调用输入变化（v2）：body + title + source + published_at；PROMPT_VERSION 升为 v2，缓存 key 用 content（无正文时用 summary），prompt 变化会自然失效旧缓存
+- GET /api/v1/news/{news_id} 扩展为 NewsDetail（原字段全部保留，向后兼容）；/daily、/daily/{date}、/favorites 仍不返回正文，避免列表下发全文
+- Mobile NewsDetailScreen 追加「原文内容」区块（分隔线 + 原文内容 · 英文原文 + 原始标题 + 原语言正文），渲染拆分在 mobile/lib/articleBody.ts（纯函数、可单测）；不提供自动翻译全文
+- 历史正文 backfill：uv run python -m app.jobs.backfill_article_content（--limit / --date），可中断、可重复、已提取跳过、单篇失败继续，不重建日报、不改 digest 关联
+- 可观察性：refresh 打印 Article extraction 汇总（Candidates / RSS full content / Web extracted / RSS fallback / Failed / Cache hit）；AI_DAILY_DEBUG_EXTRACTION=1 打印每篇 method 与字符数，绝不打印正文
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -71,6 +91,13 @@ Push（产品决策，不是缺陷）:
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
 
+Not in scope（Phase 10.5）:
+- 未做全文自动翻译、embeddings、向量数据库、RAG、语义搜索、Agent
+- 未新增新闻源，未做用户系统、云部署、HTTPS、Mobile 大规模重设计
+- 未改 Scheduler 每天 08:00 语义，未改 issue window，未改 Phase 10.4 阈值或重新设计 event dedup
+- 未引入 Alembic（正文字段走既有 create_all + ALTER TABLE ADD COLUMN 补列）
+- 未在启动时抓取全部历史正文，只提供可选的一次性 backfill 命令
+
 Not in scope（产品设计问题，与本阶段 bug 修复无关，明确未实现）:
 - 48h multi-date archive / previous-day automatic backfill / 跨多日报自动 merge
 - 未修改 scheduler 时间语义，未修改 Today 页语义
@@ -91,6 +118,11 @@ Not in scope（Phase 10.4）:
 - 未做跨日重新聚类：事件去重只在写入某份日报前运行，历史日报不自动重算
 
 Known Issues:
+- OpenAI 官网对非浏览器请求返回 403，该来源正文会退回 RSS summary（其余 10 个来源可正常提取正文）
+- 正文提取是启发式规则而非通用阅读器，个别站点改版或反爬变化时会退回 RSS summary，并在 content_extraction_method 与日志中标明
+- content_language 只做脚本判定（中/英/日/韩/俄），不做统计语言识别
+- 正文按规范化纯文本 + 轻量标记保存，不保留原始 HTML 结构与图片
+- 正文提取以 canonical URL 缓存，URL 变化（例如站点改路径）会重新抓取一次
 - 事件去重是规则而非语义理解：换个说法的同一事件可能仍判为两条（宁可少合并，也不错误合并，错误合并会静默隐藏一条真新闻）
 - 中文按字符二元组比较，对同义改写（如「发布」/「推出」）不敏感
 - 同一事件跨越 48 小时的两篇报道不会合并

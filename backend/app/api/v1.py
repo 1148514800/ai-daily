@@ -30,7 +30,7 @@ from app.db.repositories import (
 from app.db.session import new_session
 from app.jobs.daily_refresh import is_refresh_running
 from app.jobs.scheduler import next_run_at, scheduler_state
-from app.models import DailyDigest, GitHubProject, NewsItem
+from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
 from app.services.digest_store import store
 from app.services.push import ExpoPushClient, PushMessage
 from app.services.push.service import NOTIFICATION_TITLE
@@ -59,9 +59,16 @@ def get_daily_by_date(date: str) -> DailyDigest:
     return digest
 
 
-@router.get("/news/{news_id}", response_model=NewsItem)
-def get_news(news_id: str) -> NewsItem:
-    item = store.get_news(news_id)
+@router.get("/news/{news_id}", response_model=NewsDetail)
+def get_news(news_id: str) -> NewsDetail:
+    """One article with its original-language body.
+
+    Every field the digest list returns is repeated here unchanged, so the
+    detail response is a strict superset and older clients keep working. The
+    body is the cleaned original text; Chinese ``title_cn`` / ``summary`` /
+    ``why_it_matters`` are separate fields and never replace it.
+    """
+    item = store.get_news_detail(news_id)
     if item is None:
         raise HTTPException(status_code=404, detail="News item not found")
     return item

@@ -4,11 +4,11 @@
 
 ## 当前开发阶段
 
-Phase 10.4 - Cross-source Event Dedup
+Phase 10.5 - Original Article Content + Grounded Summary
 
-今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
+今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
 
-当前阶段的目标是让同一个事件被多个来源报道时，日报只保留一条主新闻，而不是连续出现三条重复内容。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
+当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后可以阅读**原始语言的完整正文**。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
 ## 目录结构
 
@@ -199,6 +199,14 @@ Google DeepMind: X
 Candidates: X
 After dedup: X
 
+Article extraction:
+Candidates: 12
+RSS full content: 3
+Web extracted: 7
+RSS fallback: 1
+Failed: 1
+Cache hit: 4
+
 Event dedup:
 Candidates: 12
 Clusters: 12
@@ -259,12 +267,12 @@ AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 - 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
 - 日报日期（`date` 主键）仍由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间（`published_at`）与窗口（`window_start` / `window_end`）统一以 UTC 保存
 - 一条新闻只属于一个窗口：`window_start < published_at <= window_end`，同一份日报的链接不会跨窗口重复
-- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end` 由轻量 `ALTER TABLE ADD COLUMN` 补列
+- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
 
 存储内容：
 
 ```text
-news_articles        新闻正文与元数据（稳定 ID upsert）
+news_articles        新闻元数据 + 原始正文（稳定 ID upsert）
 github_projects      GitHub 项目（repo 稳定 ID upsert）
 daily_digests        每天的日报（date 主键，一天一条，含 UTC window_start / window_end）
 daily_digest_news    日报与新闻的排序关系
@@ -293,6 +301,142 @@ uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
 - 不重新调用 RSS 或 LLM，也不删除任何 `news_articles` 原始记录
 - 只重建传入日期的日报关系，其他日期不受影响；GitHub 关联保持不变
 - 命令幂等，可重复执行
+
+## 原始正文 + 中文摘要 + 新闻详情
+
+日报列表适合快速浏览，但用户点进一条新闻后想读的是**原文**。Phase 10.5 建立两层内容：
+
+```text
+日报列表                            新闻详情
+中文标题                            中文标题 / 中文摘要 / Why it matters
+中文摘要              点击          来源 · 发布时间
+Why it matters       ───────►       ────────────────────────
+importance score                    原文内容（原始语言，不翻译）
+                                    原始标题
+                                    原语言完整正文
+                                    ────────────────────────
+                                    查看原文（系统浏览器打开 url）
+```
+
+**原始正文绝对不翻译、不改写**，中文摘要与原始正文是两套独立字段：
+
+```text
+content_original  原始正文，英文新闻保持英文，中文新闻保持中文
+title_cn          中文标题        ┐
+summary           中文摘要        ├ LLM 根据正文生成，绝不回写正文
+why_it_matters    为什么值得关注  │
+importance_score  0-100          ┘
+```
+
+### 正文提取 pipeline
+
+`app/services/article_extractor.py` 是**所有来源共用**的一套提取逻辑（不是 11 个 parser），来源差异只体现在列表页怎么抓，这一点 `app/collectors/` 已经处理。正文来源按优先级：
+
+```text
+RSS/Atom 自带完整正文（content:encoded / Atom content，长度达标）
+        ↓ 否则
+抓取文章网页并清洗
+        ↓ 失败则
+RSS description / summary（最后兜底，文章不会丢）
+```
+
+清洗规则：保留 paragraph / heading / list / quote（heading 保留层级、列表和引用保留标记），过滤 navbar、footer、cookie 提示、推荐阅读、分享按钮、广告、script、style、菜单、侧边栏、分页、标签、作者卡片。判断只看标签名、`class`、`id` 和 `role`，不看正文文字，所以正文里提到 cookie 不会被误删；`class` / `id` 按整词匹配，避免 `nav` 命中 `navigation-with-keyboard` 这类框架类名。正文容器在移除干扰元素后取**文本最多的候选**，因为页面里的小 `<article>` 卡片常常是相关推荐而不是正文。
+
+正文以**规范化纯文本**保存（段落之间空行，标题/列表/引用带轻量 Markdown 标记），不保存 raw HTML。
+
+### 完整正文与 LLM 输入分离
+
+数据库保存尽可能完整的正文；送给 LLM 的只是裁剪后的视图：
+
+```text
+完整正文
+      ├── 数据库 content_original：完整保存
+      │
+      └── LLM 输入：按 LLM_CONTENT_MAX_CHARS 裁剪（默认 6000 字符）
+```
+
+上限集中在 `app/services/llm/settings.py`，不在调用处散落 magic number，可用环境变量覆盖：
+
+```bash
+LLM_CONTENT_MAX_CHARS=6000
+```
+
+长文不会因为 token 限制在数据库里被截断。
+
+### Grounded summary
+
+System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v2`，改了 prompt 就会让缓存失效）明确要求：
+
+```text
+只能使用正文中实际出现的信息
+不得补充正文中不存在的事实、数字、日期、人名或结论
+不得根据模型记忆猜测或补全
+正文没有提到的内容就不要写进摘要
+正文可以是英文，但输出必须是中文
+```
+
+正文提取失败时退回 RSS summary，再退回现有 fallback；LLM 失败也不会丢文章，原文本地保存并可直接展示。
+
+### 正文 Cache
+
+以 **canonical URL** 为 key 缓存成功提取的正文（默认 `backend/.cache/articles/`，可用 `ARTICLE_CACHE_DIR` 覆盖），第二次 refresh 直接复用，不再重复请求同一个页面。**失败结果不写入缓存**，所以一次性 403 / 超时以后仍会重试。
+
+### 网络容错
+
+正文抓取具备 timeout、User-Agent、redirect 上限，非 2xx / 非 HTML / 空正文都回退到 RSS summary，单篇文章异常孤立处理，不做无限 retry。**一个页面失败永远不会让整个 refresh 失败。**
+
+### Article Detail API
+
+扩展已有的 `GET /api/v1/news/{news_id}`（不新增重复 API）
+
+```json
+{
+  "id": "rss-4aeb82da9975e2f5",
+  "source": "OpenAI",
+  "url": "https://openai.com/index/...",
+
+  "title_original": "Perplexity trusts GPT-6 Astra with end-to-end systems",
+  "content_original": "Perplexity is using ...",
+  "content_language": "en",
+  "content_extraction_method": "web",
+
+  "title_cn": "……",
+  "summary": "……",
+  "why_it_matters": "……",
+  "importance_score": 88,
+
+  "published_at": "..."
+}
+```
+
+原有字段全部保留，向后兼容。`content_original` 只在详情接口返回：日报/列表接口（`/daily`、`/daily/{date}`、`/favorites`）刻意不返回正文，避免一次下发十几篇全文。
+
+### Mobile 新闻详情页
+
+`mobile/screens/NewsDetailScreen.tsx` 在原有布局下方追加"原文内容"区块：分隔线 + `原文内容 · 英文原文` + 原始标题 + 原语言正文（渲染在 `mobile/lib/articleBody.ts`，纯函数、可单测，只做展示拆分，不改写正文）。英文正文保持英文，中文正文保持中文，**不提供"自动翻译全文"**。如果正文只拿到了 RSS 摘要，会明确提示未能抓取正文，而不是假装是全文。"查看原文"仍然用系统浏览器打开 `article.url`。
+
+### 历史文章 backfill
+
+不强制在启动时抓全部历史正文。新 refresh 正常抓；已经存在数据库里的历史新闻用一次性命令补：
+
+```bash
+cd backend
+uv run python -m app.jobs.backfill_article_content --limit 20
+uv run python -m app.jobs.backfill_article_content --date 2026-09-12
+```
+
+- 只读数据库里已有的 `news_articles`，只补正文
+- 可中断、可重复运行，已成功提取的自动跳过
+- 单篇失败继续处理下一篇
+- **不重新生成日报、不修改 `daily_digest_news` 关联、不删除任何原始记录**
+
+### 已知限制
+
+- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary（其余 10 个来源可正常抓取正文）
+- 提取是启发式规则而非通用阅读器：个别站点结构或反爬变化时会退回 RSS summary，并在 `content_extraction_method` 与日志中标明
+- `content_language` 只做脚本判定（中/英/日/韩/俄），不做统计语言识别
+- 正文按纯文本/轻量标记保存，不保留原始 HTML 结构与图片
+- 不提供全文翻译、embeddings、向量检索、RAG 或语义搜索
 
 ## 跨来源事件去重
 
@@ -369,6 +513,14 @@ MERGE TechCrunch AI: OpenAI 推出 GPT-6 Astra 前沿模型
 ```
 
 `uv run python -m app.collectors.refresh` 在 `AI_DAILY_DEBUG_GITHUB=1` 时会一并打印这些细节。
+
+正文提取同样有默认汇总 + 可选明细（`AI_DAILY_DEBUG_EXTRACTION=1`，只打印方法与字符数，**绝不打印正文**）：
+
+```text
+OpenAI | WEB | 8432 chars
+DeepMind | CACHE | 12540 chars
+TechCrunch | FALLBACK | HTTP 403
+```
 
 ### 已知限制
 
@@ -554,6 +706,8 @@ LLM_BASE_URL=https://api.example.com/v1
 - 不要把 API Key 写进代码或提交 `.env`
 - `LLM_ENABLED=false` 或没有 API Key 时，后端仍返回最近 24 小时去重后的 RSS 原文
 - LLM 只处理 24h + 去重后的候选，不会把历史 RSS 全部送去生成
+- LLM 的输入是**提取到的原始正文**（按 `LLM_CONTENT_MAX_CHARS` 裁剪，默认 6000 字符），不是只有 RSS 摘要；正文抓取失败时自动退回 RSS 摘要
+- 提取到的完整正文单独保存在数据库 `news_articles.content_original`，不受上面这个裁剪影响
 - 使用 OpenAI 兼容的 `/chat/completions` 接口
 - 本地 Cache 目录是 `backend/.cache/`，已加入 `.gitignore`
 

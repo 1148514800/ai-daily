@@ -7,9 +7,11 @@ from app.db.session import init_db
 from app.jobs.daily_refresh import run_manual_refresh
 from app.services.digest_store import store
 from app.services.event_dedup import format_event_dedup
+from app.services.article_extractor import format_extraction_stats
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
+EXTRACTION_DEBUG_ENV = "AI_DAILY_DEBUG_EXTRACTION"
 
 
 def _configure_stdout() -> None:
@@ -22,6 +24,10 @@ def _configure_stdout() -> None:
 
 def _debug_enabled() -> bool:
     return os.getenv(DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extraction_debug_enabled() -> bool:
+    return os.getenv(EXTRACTION_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _format_list(items: list[str]) -> str:
@@ -107,6 +113,9 @@ def main() -> None:
     print(f"After dedup: {article_stats.candidates}")
     if failed:
         print(f"Failed: {', '.join(failed)}")
+    print()
+
+    print(format_extraction_stats(store.last_extraction_stats, debug=_extraction_debug_enabled()))
     print()
 
     event_stats = store.last_event_stats

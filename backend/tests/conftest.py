@@ -311,6 +311,26 @@ def disable_scheduler_by_default(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def offline_article_pages(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """No test reaches the network for an article body.
+
+    Article extraction runs inside the production refresh path, so without this
+    every suite that collects news would fetch the fixture URLs for real. The
+    default is a deterministic failure, which is also the documented behaviour
+    when a page cannot be read: the article keeps its RSS summary. Tests that
+    cover page extraction inject their own ``fetch_page`` / ``fetch`` instead.
+    """
+    from app.collectors.http import FetchError
+
+    monkeypatch.setenv("ARTICLE_CACHE_DIR", str(tmp_path / "article-cache"))
+
+    def offline(url: str, *, timeout: float = 10.0):
+        raise FetchError("article pages are offline in tests")
+
+    monkeypatch.setattr("app.services.article_extractor.fetch_article_page", offline)
+
+
+@pytest.fixture(autouse=True)
 def patch_github_network(request, monkeypatch: pytest.MonkeyPatch, github_trending_html: str):
     from app.services.github_store import github_store
 

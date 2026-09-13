@@ -15,6 +15,20 @@ export type NewsItem = {
   importance_score?: number | null;
 };
 
+/**
+ * One article with its original body. The detail endpoint returns every
+ * NewsItem field plus the original-language text, which the list response
+ * omits to keep the digest payload small.
+ */
+export type NewsDetail = NewsItem & {
+  /** The article as published, in its original language. Never translated. */
+  content_original: string;
+  /** BCP-47-ish code for the body, e.g. "en" / "zh". Empty if unknown. */
+  content_language: string;
+  content_extraction_method: string;
+  content_fetched_at: string | null;
+};
+
 export type GitHubProject = {
   id: string;
   repo: string;

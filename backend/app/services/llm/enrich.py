@@ -14,6 +14,7 @@ from app.services.llm.client import LLMClient, LLMCompletion, LLMError, parse_co
 from app.services.llm.prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
 from app.services.llm.schemas import ArticleEnrichment
 from app.services.llm.settings import LLMSettings, load_llm_settings
+from app.services.article_extractor import truncate_for_llm
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 2
@@ -73,10 +74,16 @@ def _published_label(raw: RawArticle) -> str:
 
 
 def _cache_key(cache: LLMCache, raw: RawArticle, settings: LLMSettings) -> str:
+    """Cache identity of one enrichment.
+
+    The body participates so a summary generated from a feed teaser and one
+    generated from the full article are distinct entries; ``PROMPT_VERSION`` in
+    the same key invalidates everything when the prompt changes.
+    """
     return cache.make_key(
         canonical_url=raw.canonical_url or raw.url,
         title=raw.title,
-        summary=raw.summary,
+        summary=raw.content or raw.summary,
         model=settings.model,
         prompt_version=PROMPT_VERSION,
     )
@@ -109,6 +116,10 @@ def enrich_one(
                 title_original=raw.title,
                 rss_summary=raw.summary,
                 published_at=_published_label(raw),
+                # The prompt gets a trimmed view; the database keeps the whole
+                # body, so a long article is never truncated in storage.
+                content=truncate_for_llm(raw.content, settings.content_max_chars),
+                content_language=raw.content_language,
             ),
         },
     ]

@@ -32,6 +32,15 @@ class RawArticle:
     canonical_url: str
     published_at: datetime | None
     summary: str
+    # The body the feed itself carries (RSS ``content:encoded``, Atom
+    # ``content``). Empty when the feed only publishes a short description.
+    feed_body: str = ""
+    # Filled in by the article extraction step, in the article's own language.
+    # Kept separate from ``summary``, which the LLM turns into Chinese prose.
+    content: str = ""
+    content_language: str = ""
+    content_method: str = ""
+    content_fetched_at: datetime | None = None
 
 
 @dataclass(frozen=True)

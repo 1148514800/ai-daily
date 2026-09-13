@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -17,7 +17,7 @@ from app.db.models import (
     RefreshRunRow,
     utcnow,
 )
-from app.models import GitHubProject, NewsCategory, NewsItem
+from app.models import GitHubProject, NewsCategory, NewsDetail, NewsItem
 from app.pipelines.urls import canonicalize_url
 
 ITEM_TYPE_NEWS = "news"
@@ -59,21 +59,52 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def _news_row_to_item(row: NewsArticleRow) -> NewsItem:
-    return NewsItem(
+def _news_row_fields(row: NewsArticleRow) -> dict:
+    """The column values both the list and the detail model are built from.
+
+    The two models share every field, so the mapping lives here once and each
+    model just adds the body fields it exposes.
+
+    Text columns are read defensively: ``_add_missing_sqlite_columns`` adds new
+    columns with ``ALTER TABLE ADD COLUMN`` and no default, which leaves NULL in
+    every row that predates the column, and those rows must still load.
+    """
+    return dict(
         id=row.id,
-        title_cn=row.title_cn,
-        title_original=row.title_original,
-        summary=row.summary,
-        why_it_matters=row.why_it_matters,
-        source=row.source,
-        source_type=row.source_type,
+        title_cn=row.title_cn or "",
+        title_original=row.title_original or "",
+        summary=row.summary or "",
+        why_it_matters=row.why_it_matters or "",
+        source=row.source or "",
+        source_type=row.source_type or "",
         published_at=row.published_at.isoformat() if row.published_at else "",
         category=NewsCategory(row.category) if row.category else NewsCategory.highlight,
         tags=[row.source] if row.source else [],
-        url=row.url,
+        url=row.url or "",
         importance_score=row.importance_score,
+        # Carried on the model but excluded from list serialisation, so the
+        # digest response stays small while the detail endpoint has the body.
+        content_original=row.content_original or "",
+        content_language=row.content_language or "",
+        content_extraction_method=row.content_extraction_method or "",
+        content_fetched_at=_as_utc(row.content_fetched_at).isoformat()
+        if row.content_fetched_at
+        else None,
     )
+
+
+def _news_row_to_item(row: NewsArticleRow) -> NewsItem:
+    return NewsItem(**_news_row_fields(row))
+
+
+def _news_row_to_detail(row: NewsArticleRow) -> NewsDetail:
+    """The same row as a detail view, with the original body included.
+
+    Built from the row rather than from the list item because the list model
+    excludes the body fields from serialisation, and a round-trip through
+    ``model_dump`` would drop them here too.
+    """
+    return NewsDetail(**_news_row_fields(row))
 
 
 def _github_row_to_project(row: GitHubProjectRow) -> GitHubProject:
@@ -106,7 +137,12 @@ class NewsRepository:
         self.session = session
 
     def upsert_many(self, items: list[NewsItem]) -> int:
-        """Insert or update news by stable ID. Returns the number of rows touched."""
+        """Insert or update news by stable ID. Returns the number of rows touched.
+
+        A body already stored is only replaced by a non-empty one, so a refresh
+        whose extraction failed cannot erase the original text a previous run
+        saved.
+        """
         touched = 0
         for item in items:
             row = self.session.get(NewsArticleRow, item.id)
@@ -127,6 +163,10 @@ class NewsRepository:
                         url=item.url,
                         canonical_url=canonical,
                         importance_score=item.importance_score,
+                        content_original=item.content_original,
+                        content_language=item.content_language,
+                        content_extraction_method=item.content_extraction_method,
+                        content_fetched_at=_parse_datetime(item.content_fetched_at or ""),
                     )
                 )
             else:
@@ -141,6 +181,11 @@ class NewsRepository:
                 row.url = item.url
                 row.canonical_url = canonical
                 row.importance_score = item.importance_score
+                if item.content_original:
+                    row.content_original = item.content_original
+                    row.content_language = item.content_language
+                    row.content_extraction_method = item.content_extraction_method
+                    row.content_fetched_at = _parse_datetime(item.content_fetched_at or "")
             touched += 1
         self.session.flush()
         return touched
@@ -148,6 +193,66 @@ class NewsRepository:
     def get(self, news_id: str) -> NewsItem | None:
         row = self.session.get(NewsArticleRow, news_id)
         return _news_row_to_item(row) if row is not None else None
+
+    def get_detail(self, news_id: str) -> NewsDetail | None:
+        row = self.session.get(NewsArticleRow, news_id)
+        return _news_row_to_detail(row) if row is not None else None
+
+    def set_content(
+        self,
+        news_id: str,
+        *,
+        content: str,
+        language: str,
+        method: str,
+        fetched_at: datetime | None = None,
+    ) -> bool:
+        """Store an extracted body without touching the digest association."""
+        row = self.session.get(NewsArticleRow, news_id)
+        if row is None:
+            return False
+        row.content_original = content
+        row.content_language = language
+        row.content_extraction_method = method
+        row.content_fetched_at = fetched_at or utcnow()
+        self.session.flush()
+        return True
+
+    def list_missing_content(
+        self,
+        *,
+        limit: int | None = None,
+        published_between: tuple[datetime, datetime] | None = None,
+    ) -> list[NewsArticleRow]:
+        """Stored articles that still have no body, oldest first.
+
+        Used by the one-shot backfill; the ordering keeps an interrupted run
+        resumable because the already-filled rows drop out of the result. An
+        optional UTC interval restricts the work to one digest's window.
+
+        A row written before Phase 10.5 has NULL in the new column rather than an
+        empty string, and those are exactly the rows the backfill is for, so both
+        are treated as missing.
+        """
+        statement = (
+            select(NewsArticleRow)
+            .where(
+                or_(
+                    NewsArticleRow.content_original.is_(None),
+                    NewsArticleRow.content_original == "",
+                )
+            )
+            .order_by(NewsArticleRow.published_at, NewsArticleRow.id)
+        )
+        if published_between is not None:
+            start, end = published_between
+            statement = statement.where(
+                NewsArticleRow.published_at > start,
+                NewsArticleRow.published_at <= end,
+            )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list(self.session.scalars(statement).all())
 
     def exists(self, news_id: str) -> bool:
         return self.session.get(NewsArticleRow, news_id) is not None

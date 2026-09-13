@@ -8,9 +8,22 @@ from app.config.env import BACKEND_ROOT, load_dotenv
 
 DEFAULT_TIMEOUT = 20.0
 
+# How much of the original body is sent to the LLM. The database keeps the whole
+# article; only the prompt is trimmed, and the limit lives here so no call site
+# hard-codes a length of its own.
+DEFAULT_CONTENT_MAX_CHARS = 6000
+
 
 def _as_bool(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_int(value: str | None, default: int) -> int:
+    try:
+        parsed = int((value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,8 @@ class LLMSettings:
     base_url: str
     timeout: float
     cache_dir: Path
+    # Maximum number of body characters sent per article. 0 means no trimming.
+    content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS
 
     @property
     def available(self) -> bool:
@@ -39,4 +54,5 @@ def load_llm_settings() -> LLMSettings:
         base_url=(os.getenv("LLM_BASE_URL") or "").strip(),
         timeout=DEFAULT_TIMEOUT,
         cache_dir=cache_dir,
+        content_max_chars=_as_int(os.getenv("LLM_CONTENT_MAX_CHARS"), DEFAULT_CONTENT_MAX_CHARS),
     )

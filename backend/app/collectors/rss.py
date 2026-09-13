@@ -72,6 +72,33 @@ def _entry_url(entry: dict) -> str:
     return _http_url(entry.get("id") or entry.get("guid"))
 
 
+def _entry_body(entry: dict) -> str:
+    """The full article body when the feed carries one, otherwise "".
+
+    ``content:encoded`` and Atom ``<content>`` are where a feed publishes the
+    whole article; ``summary`` / ``description`` is usually a teaser. Both are
+    kept verbatim and in their original language; nothing is translated or
+    rewritten here.
+    """
+    parts: list[str] = []
+    content = entry.get("content")
+    if isinstance(content, list):
+        for item in content:
+            value = item.get("value") if isinstance(item, dict) else item
+            if value:
+                parts.append(str(value))
+    elif content:
+        parts.append(str(content))
+    for key in ("content_encoded", "content_encoded_body"):
+        value = entry.get(key)
+        if value:
+            parts.append(str(value))
+    # Whether this is long enough to stand in for the whole article is the
+    # extractor's call, using its configured threshold; the collector only
+    # reports what the feed actually published.
+    return max(parts, key=len) if parts else ""
+
+
 def parse_feed(xml: str, source: NewsSource) -> CollectResult:
     result = CollectResult(source_id=source.id, source_name=source.name)
     try:
@@ -108,6 +135,7 @@ def parse_feed(xml: str, source: NewsSource) -> CollectResult:
             canonical_url=canonicalize_url(url),
             published_at=published_at,
             summary=summary,
+            feed_body=_entry_body(entry),
         )
         result.valid.append(raw)
         result.news_items.append(news_item_from_raw(raw))

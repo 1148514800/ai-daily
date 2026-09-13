@@ -5,6 +5,7 @@ import { FavoriteButton } from '../components/FavoriteButton';
 import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
 import { useAsyncResource } from '../hooks/useAsyncResource';
+import { isSummaryOnly, languageLabel, parseArticleBody } from '../lib/articleBody';
 import { formatTime } from '../lib/format';
 import { fetchNews } from '../services/api';
 import { colors, radius, spacing, typography } from '../theme';
@@ -17,6 +18,9 @@ type NewsDetailScreenProps = {
 export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
   const { status, data, error, reload } = useAsyncResource(() => fetchNews(newsId), [newsId]);
   const notFound = status === 'error' && error?.status === 404;
+  // The body is shown in the language it was published in. Nothing here
+  // translates it; the Chinese summary above is a separate field.
+  const body = parseArticleBody(data?.content_original);
 
   async function openOriginal() {
     if (!data) {
@@ -64,6 +68,53 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
                 {data.tags.map((tag) => (
                   <Chip key={tag} label={tag} />
                 ))}
+              </View>
+            ) : null}
+
+            {body.length ? (
+              <View style={styles.originalSection}>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>
+                  原文内容 · {languageLabel(data.content_language)}
+                </Text>
+                <Text style={styles.originalTitle}>{data.title_original}</Text>
+                {body.map((block, index) => {
+                  const key = `${block.kind}-${index}`;
+                  if (block.kind === 'heading') {
+                    return (
+                      <Text
+                        key={key}
+                        style={[styles.originalHeading, block.level <= 2 && styles.originalHeadingTop]}
+                      >
+                        {block.text}
+                      </Text>
+                    );
+                  }
+                  if (block.kind === 'list') {
+                    return (
+                      <Text key={key} style={styles.originalListItem}>
+                        · {block.text}
+                      </Text>
+                    );
+                  }
+                  if (block.kind === 'quote') {
+                    return (
+                      <Text key={key} style={styles.originalQuote}>
+                        {block.text}
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Text key={key} style={styles.originalParagraph}>
+                      {block.text}
+                    </Text>
+                  );
+                })}
+                {isSummaryOnly(data.content_extraction_method) ? (
+                  <Text style={styles.notice}>
+                    未能抓取正文，这里显示的是该来源提供的摘要，可点击下方按钮查看原文。
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -121,6 +172,55 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     borderRadius: radius.md,
     padding: spacing.md,
+  },
+  originalSection: {
+    marginTop: spacing.lg,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginBottom: spacing.lg,
+  },
+  originalTitle: {
+    ...typography.subtitle,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  originalHeading: {
+    fontSize: 17,
+    lineHeight: 26,
+    fontWeight: '600',
+    color: colors.text,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  originalHeadingTop: {
+    fontSize: 19,
+    lineHeight: 28,
+  },
+  originalParagraph: {
+    ...typography.body,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  originalListItem: {
+    ...typography.body,
+    color: colors.text,
+    marginBottom: spacing.xs,
+    paddingLeft: spacing.xs,
+  },
+  originalQuote: {
+    ...typography.body,
+    color: colors.textSecondary,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.border,
+    paddingLeft: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  notice: {
+    ...typography.meta,
+    color: colors.textTertiary,
+    marginTop: spacing.sm,
   },
   tags: {
     flexDirection: 'row',
