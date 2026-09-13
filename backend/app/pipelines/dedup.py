@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from app.collectors.raw import RawArticle
-from app.config.sources import RSSSource, source_map
+from app.config.sources import NewsSource, source_map
 
 PUNCTUATION_RE = re.compile(r"[.,;:!?\"'`()\[\]{}]+")
 WHITESPACE_RE = re.compile(r"\s+")
@@ -31,7 +31,7 @@ def within_hours(left: datetime | None, right: datetime | None, hours: int) -> b
     return abs(start - end) <= timedelta(hours=hours)
 
 
-def choose_winner(articles: list[RawArticle], sources: dict[str, RSSSource] | None = None) -> RawArticle:
+def choose_winner(articles: list[RawArticle], sources: dict[str, NewsSource] | None = None) -> RawArticle:
     lookup = sources or source_map()
 
     def sort_key(article: RawArticle) -> tuple:
@@ -44,7 +44,7 @@ def choose_winner(articles: list[RawArticle], sources: dict[str, RSSSource] | No
     return sorted(articles, key=sort_key)[0]
 
 
-def dedupe_articles(articles: list[RawArticle], sources: dict[str, RSSSource] | None = None) -> list[RawArticle]:
+def dedupe_articles(articles: list[RawArticle], sources: dict[str, NewsSource] | None = None) -> list[RawArticle]:
     lookup = sources or source_map()
     by_url: dict[str, list[RawArticle]] = {}
     for article in articles:

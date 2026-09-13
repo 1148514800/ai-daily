@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.2（Issue Window 日报模型）
+Current Phase: Phase 10.3（扩展 AI 信息源）
 
 Completed:
 - 项目初始化
@@ -19,11 +19,12 @@ Completed:
 - 本地长期部署、可配置 Backend URL 与可安装 APK（Phase 10）
 - 日报日期归属修复：future timestamp bug + natural-day invariant + 历史日报重建（Phase 10.1）
 - 日报改为 Issue Window（Since Last Successful Digest）：daily_digests 新增 window_start / window_end（UTC），窗口为 (window_start, window_end]（Phase 10.2）
+- 扩展 AI 信息源：从 3 个 RSS 升级为 11 个来源（8 官方 + 1 社区博客 + 2 媒体），新增 HTML 采集器与统一 source 配置（Phase 10.3）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- RSS -> Collector -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite
+- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -70,8 +71,16 @@ Not in scope（Phase 10.2）:
 - 未引入 first_seen_at
 - 未改 Scheduler 每天 08:00 的语义，未改 Mobile，未启用 Push，未做云部署
 
+Not in scope（Phase 10.3）:
+- 未引入 embedding / LLM 事件聚类，跨来源去重仍是现有 URL / 标题规则
+- 未改日报时间模型（仍为 Phase 10.2 的 issue window），未改 Mobile，未启用 Push，未做云部署
+- 未接入机器之心：服务端对所有请求统一返回同一个机器人拦截页，没有可用 RSS 或文章列表
+
 Known Issues:
 - 无语义级事件聚类
+- 机器之心当前无法稳定自动采集，尚未接入；后续若出现官方 Feed 可再评估
+- Meta AI 接入的是 Meta Engineering 的 AI Research 分类 Feed，而非 ai.meta.com 的产品博客（后者没有官方 RSS，且列表页日期需从卡片上下文推断）
+- Anthropic / DeepSeek / Kimi 依赖官方页面结构；页面改版时该来源会记为 failed，并在日志中明确标出，不影响其他来源
 - 历史 future-timestamp bug 造成的污染需要手动跑一次 rebuild_digests 修复（不会自动 backfill）
 - Phase 10.2 之前写入的日报没有 window_start / window_end，首次 rebuild 会按配置 cutoff 推导；若这些日报当时并非在 cutoff 时刻生成，推导窗口只是近似
 - GitHub 强关键词列表仍需按实际误报迭代

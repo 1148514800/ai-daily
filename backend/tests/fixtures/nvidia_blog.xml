@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>NVIDIA Blog</title>
+    <link>https://blogs.nvidia.com</link>
+    <item>
+      <title>Skild AI Taps NVIDIA Physical AI</title>
+      <description>Robots learn new tasks from a single video.</description>
+      <link>https://blogs.nvidia.com/blog/skild-ai-s1-physical-ai/</link>
+      <pubDate>Thu, 10 Sep 2026 16:30:35 +0000</pubDate>
+    </item>
+    <item>
+      <title>Physical AI Takes the Wheel</title>
+      <link>https://blogs.nvidia.com/blog/robotaxi-leaders-full-stack-open-platform/</link>
+      <pubDate>Thu, 10 Sep 2026 16:00:04 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

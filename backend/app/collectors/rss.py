@@ -1,42 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from time import struct_time
 
 import feedparser
-import httpx
 
-from app.collectors.raw import RawArticle
-from app.config.sources import RSSSource, enabled_sources
+from app.collectors.http import DEFAULT_TIMEOUT, RSS_ACCEPT, fetch_text as http_fetch_text
+from app.collectors.html import collect_html_source
+from app.collectors.raw import CollectResult, RawArticle
+from app.config.sources import NewsSource, enabled_sources
 from app.models import NewsItem
 from app.pipelines.normalize import news_item_from_raw
 from app.pipelines.urls import canonicalize_url
 
-DEFAULT_TIMEOUT = 10.0
 DEFAULT_WINDOW_HOURS = 24
-USER_AGENT = "ai-daily/0.1 (+https://github.com/1148514800/ai-daily)"
-
-
-@dataclass
-class CollectResult:
-    source_id: str = ""
-    source_name: str = ""
-    success: bool = True
-    fetched: int = 0
-    valid: list[RawArticle] = field(default_factory=list)
-    skipped: int = 0
-    news_items: list[NewsItem] = field(default_factory=list)
-    error: str | None = None
 
 
 def fetch_rss_text(url: str, timeout: float = DEFAULT_TIMEOUT) -> str:
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"}
-    with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.text
+    return http_fetch_text(url, timeout=timeout, accept=RSS_ACCEPT)
 
 
 def _parse_datetime(raw: str) -> datetime | None:
@@ -90,7 +72,7 @@ def _entry_url(entry: dict) -> str:
     return _http_url(entry.get("id") or entry.get("guid"))
 
 
-def parse_feed(xml: str, source: RSSSource) -> CollectResult:
+def parse_feed(xml: str, source: NewsSource) -> CollectResult:
     result = CollectResult(source_id=source.id, source_name=source.name)
     try:
         parsed = feedparser.parse(xml)
@@ -134,11 +116,14 @@ def parse_feed(xml: str, source: RSSSource) -> CollectResult:
 
 
 def collect_source(
-    source: RSSSource,
+    source: NewsSource,
     *,
     timeout: float = DEFAULT_TIMEOUT,
     fetch_text=None,
 ) -> CollectResult:
+    if source.kind == "html":
+        return collect_html_source(source, timeout=timeout, fetch_text=fetch_text)
+
     fetch = fetch_text or fetch_rss_text
     try:
         xml = fetch(source.url, timeout=timeout)
@@ -195,4 +180,3 @@ def within_last_hours(item: NewsItem, now: datetime, hours: int = DEFAULT_WINDOW
     # A future timestamp yields a negative delta and must never be a candidate,
     # even though "now - published <= 24h" would happily accept it.
     return timedelta(0) <= delta <= timedelta(hours=hours)
-

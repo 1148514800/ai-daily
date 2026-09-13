@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config.timezone import app_timezone
+from app.config.sources import enabled_sources
 from app.db.session import configure_database, init_db, reset_database
 from app.services.github_client import RepoMetadata
 
@@ -114,24 +115,129 @@ def github_trending_html() -> str:
     return read_fixture("github_trending.html")
 
 
-def make_fixture_fetch(openai_xml: str, deepmind_xml: str, huggingface_xml: str, failing: set[str] | None = None):
+@pytest.fixture
+def anthropic_news_html() -> str:
+    return read_fixture("anthropic_news.html")
+
+
+@pytest.fixture
+def deepseek_index_html() -> str:
+    return read_fixture("deepseek_index.html")
+
+
+@pytest.fixture
+def deepseek_news_html() -> str:
+    return read_fixture("deepseek_news.html")
+
+
+@pytest.fixture
+def kimi_blog_html() -> str:
+    return read_fixture("kimi_blog.html")
+
+
+@pytest.fixture
+def nvidia_rss_xml() -> str:
+    return read_fixture("nvidia_blog.xml")
+
+
+@pytest.fixture
+def qwen_rss_xml() -> str:
+    return read_fixture("qwen_blog.xml")
+
+
+@pytest.fixture
+def techcrunch_rss_xml() -> str:
+    return read_fixture("techcrunch_ai.xml")
+
+
+@pytest.fixture
+def qbitai_rss_xml() -> str:
+    return read_fixture("qbitai.xml")
+
+
+EMPTY_RSS = (
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<rss version=\"2.0\"><channel><title>Empty</title></channel></rss>\n"
+)
+
+# Pages that load but list nothing, so an unmapped source still succeeds with
+# zero news instead of failing. Each keeps whichever structure its extractor
+# insists on, which is what tells "nothing published" apart from "markup moved".
+EMPTY_HTML = {
+    "deepseek": (
+        "<html><body><a href=\"/news/placeholder\">News</a>"
+        "<a class=\"menu__link\" href=\"/news/placeholder\">News</a></body></html>"
+    ),
+    "anthropic": "<html><body><a href=\"/news/placeholder\">Undated</a></body></html>",
+    "kimi": (
+        "<html><body><script>self.__next_f.push([1,\"1:[{\\\"articleList\\\":"
+        "{\\\"items\\\":[]}}]\\n\"])</script></body></html>"
+    ),
+}
+
+DEEPSEEK_SOURCE_ID = "deepseek"
+DEEPSEEK_URL_PREFIX = "https://api-docs.deepseek.com/"
+
+
+def empty_page(source_id: str, kind: str) -> str:
+    """A payload valid for ``source_id`` that lists nothing.
+
+    Window and dedupe tests only care about the sources they configure, so the
+    rest answer with an empty page of the right shape: an empty feed for RSS,
+    an empty listing for HTML. That keeps every source succeeding instead of
+    failing on a format it never sees in production.
+    """
+    if kind != "html":
+        return EMPTY_RSS
+    return EMPTY_HTML.get(source_id, f"<html><body><p>{source_id}</p></body></html>")
+
+
+def source_payloads(openai_xml: str, deepmind_xml: str, huggingface_xml: str) -> dict[str, str]:
+    """Fixture payload keyed by source id, with an empty page for the rest."""
+    payloads = {"openai": openai_xml, "deepmind": deepmind_xml, "huggingface": huggingface_xml}
+    for source in enabled_sources():
+        payloads.setdefault(source.id, empty_page(source.id, source.kind))
+    return payloads
+
+
+def make_fixture_fetch(
+    openai_xml: str,
+    deepmind_xml: str,
+    huggingface_xml: str,
+    failing: set[str] | None = None,
+    pages: dict[str, str] | None = None,
+):
+    """Serve the configured fixture for every enabled source URL.
+
+    A source without an explicit payload answers with an empty fixture, so a
+    test that only cares about three sources never trips over the other enabled
+    ones. ``failing`` makes a named source raise, which is how the
+    per-source-failure tests stay deterministic without touching the network.
+    ``pages`` adds extra ``{url: payload}`` routes for sources that read more
+    than one page, such as DeepSeek's index-then-listing pair.
+    """
     failing = failing or set()
+    fixtures = source_payloads(openai_xml, deepmind_xml, huggingface_xml)
+    routes: dict[str, tuple[str, str]] = {
+        source.url: (source.id, fixtures[source.id]) for source in enabled_sources()
+    }
+    for url, payload in (pages or {}).items():
+        source_id = DEEPSEEK_SOURCE_ID if url.startswith(DEEPSEEK_URL_PREFIX) else url
+        routes[url] = (source_id, payload)
 
     def fetch(url: str, timeout: float = 10.0) -> str:
-        if "openai.com" in url:
-            source_id = "openai"
-            xml = openai_xml
-        elif "deepmind.google" in url:
-            source_id = "deepmind"
-            xml = deepmind_xml
-        elif "huggingface.co" in url:
-            source_id = "huggingface"
-            xml = huggingface_xml
-        else:
+        route = routes.get(url) or routes.get(url.rstrip("/")) or routes.get(url + "/")
+        if route is None and url.startswith(DEEPSEEK_URL_PREFIX):
+            # DeepSeek reads its release listing from a second page whose URL is
+            # only known after the index is parsed, so every further DeepSeek URL
+            # serves the same listing fixture.
+            route = (DEEPSEEK_SOURCE_ID, fixtures.get(DEEPSEEK_SOURCE_ID, EMPTY_RSS))
+        if route is None:
             raise httpx.ConnectError(f"unknown source {url}")
+        source_id, payload = route
         if source_id in failing:
             raise httpx.ConnectError(f"{source_id} offline")
-        return xml
+        return payload
 
     return fetch
 
@@ -227,6 +333,9 @@ def patch_github_network(request, monkeypatch: pytest.MonkeyPatch, github_trendi
 def patch_rss_feeds(monkeypatch: pytest.MonkeyPatch, openai_rss_xml: str, deepmind_rss_xml: str, huggingface_rss_xml: str):
     fetch = make_fixture_fetch(openai_rss_xml, deepmind_rss_xml, huggingface_rss_xml)
     monkeypatch.setattr("app.collectors.rss.fetch_rss_text", fetch)
+    # HTML sources go through their own fetch function, so patching only the RSS
+    # one would let the Anthropic / DeepSeek / Kimi tests reach the network.
+    monkeypatch.setattr("app.collectors.html.fetch_html", fetch)
     monkeypatch.setattr("app.services.digest_store.now_utc", lambda: FROZEN_NOW)
     monkeypatch.setattr("app.services.refresh_service.now_utc", lambda: FROZEN_NOW, raising=False)
     return fetch

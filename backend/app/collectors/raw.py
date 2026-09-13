@@ -1,5 +1,25 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+from app.models import NewsItem
+
+
+@dataclass
+class CollectResult:
+    """What one source produced in a single collection run.
+
+    Every collector, RSS or HTML, returns this shape so the pipeline and the
+    per-source failure isolation never need to know how a source was read.
+    """
+
+    source_id: str = ""
+    source_name: str = ""
+    success: bool = True
+    fetched: int = 0
+    valid: list["RawArticle"] = field(default_factory=list)
+    skipped: int = 0
+    news_items: list[NewsItem] = field(default_factory=list)
+    error: str | None = None
 
 
 @dataclass(frozen=True)

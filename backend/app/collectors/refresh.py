@@ -92,16 +92,15 @@ def main() -> None:
     article_stats = store.last_llm_stats
     failed: list[str] = []
 
-    print("RSS")
+    print("Sources")
     for report in reports:
-        print(f"{report.source_name}:")
-        print(f"Fetched: {report.fetched}")
-        print(f"Valid: {len(report.valid)}")
-        print(f"Skipped: {report.skipped}")
+        if report.success:
+            print(f"{report.source_name}: {len(report.valid)}")
+        else:
+            print(f"{report.source_name}: failed")
         if report.error:
             print(f"Error: {report.error}")
             failed.append(report.source_name)
-        print()
 
     print(f"Candidates: {article_stats.candidates}")
     print(f"After dedup: {article_stats.candidates}")

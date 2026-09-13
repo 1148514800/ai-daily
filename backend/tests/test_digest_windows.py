@@ -22,7 +22,7 @@ from app.services.digest_window import (
     resolve_window,
     scheduled_cutoff,
 )
-from tests.conftest import build_rss
+from tests.conftest import EMPTY_HTML, EMPTY_RSS, build_rss
 
 UTC = timezone.utc
 
@@ -70,15 +70,24 @@ def news_item(*, news_id: str, published_at: datetime, source: str = "OpenAI") -
 
 
 def per_source_fetch(items: list[tuple[str, str, datetime]]):
-    """Serve one feed per enabled source, each with its own URL namespace."""
+    """Serve one feed per enabled source, each with its own URL namespace.
+
+    The RSS sources carry the articles under test. The HTML sources answer with
+    an empty listing of their own shape, so they neither fail the refresh nor
+    contribute news the window tests did not ask for.
+    """
     sources = source_map()
 
     def fetch(url: str, timeout: float = 10.0) -> str:
         for source_id, source in sources.items():
-            if source.url == url:
+            if source.url.rstrip("/") == url.rstrip("/"):
                 break
         else:
+            if url.startswith("https://api-docs.deepseek.com/"):
+                return EMPTY_HTML["deepseek"]
             raise AssertionError(f"unexpected source {url}")
+        if source.kind == "html":
+            return EMPTY_HTML.get(source_id, EMPTY_RSS)
         entries = [
             (title, f"https://example.com/{source_id}/{slug}", when)
             for title, slug, when in items

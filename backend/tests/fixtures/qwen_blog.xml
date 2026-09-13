@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Qwen Blog</title>
+    <link>https://qwenlm.github.io/blog/</link>
+    <item>
+      <title>Qwen3Guard: Real-time Safety for Your Token Stream</title>
+      <description>Streaming safety classification for generation.</description>
+      <link>https://qwenlm.github.io/blog/qwen3guard/</link>
+      <pubDate>Tue, 23 Sep 2025 04:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>Qwen-Image-Edit</title>
+      <link>https://qwenlm.github.io/blog/qwen-image-edit/</link>
+      <pubDate>Tue, 19 Aug 2025 01:30:00 +0800</pubDate>
+    </item>
+  </channel>
+</rss>

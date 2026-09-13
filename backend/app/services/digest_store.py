@@ -99,6 +99,15 @@ class DigestStore:
                 report.skipped,
                 report.error,
             )
+        logger.info(
+            "per-source: %s",
+            " | ".join(
+                f"{report.source_name}: {len(report.valid)}"
+                if report.success
+                else f"{report.source_name}: failed"
+                for report in reports
+            ),
+        )
 
         merged = []
         for report in reports:

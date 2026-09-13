@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 
-import httpx
 from app.collectors.rss import collect_all_sources, parse_feed
 from app.config.sources import source_by_id
 from app.services.digest_store import DigestStore
@@ -69,8 +68,9 @@ def test_store_empty_when_all_old() -> None:
       <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
     </item>
     </channel></rss>"""
+    fetch = make_fixture_fetch(xml, xml, xml)
     store = DigestStore()
-    store.refresh(now=FROZEN_NOW, fetch_text=lambda url, timeout=10.0: xml)
+    store.refresh(now=FROZEN_NOW, fetch_text=fetch)
     digest = store.get_today()
     assert digest.news == []
     assert digest.date == FROZEN_DIGEST_DATE

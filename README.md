@@ -6,7 +6,7 @@
 
 Phase 10 - Local Deployment
 
-今日 AI 新闻来自 OpenAI、Google DeepMind 和 Hugging Face 的 RSS；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
+今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
 
 当前阶段的目标是让整套系统在本地 Windows 电脑上长期运行，并生成可以直接安装到真机的 Android APK。App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
@@ -129,10 +129,30 @@ npm test
 
 ## 当前真实来源
 
+官方一手来源（`source_type=official`，去重时优先）：
+
 - OpenAI News RSS：`https://openai.com/news/rss.xml`
+- Anthropic News：`https://www.anthropic.com/news`（官方页面 HTML）
 - Google DeepMind Blog RSS：`https://deepmind.google/blog/rss.xml`
+- Meta AI（Meta Engineering AI Research RSS）：`https://engineering.fb.com/category/ai-research/feed/`
+- NVIDIA Blog RSS：`https://blogs.nvidia.com/feed/`
+- DeepSeek News：`https://api-docs.deepseek.com/news/`（官方文档站 HTML）
+- Qwen Blog RSS（Atom/`index.xml`）：`https://qwenlm.github.io/blog/index.xml`
+- Kimi Research Blog：`https://www.kimi.com/en/blog/`（官方页面 HTML）
+
+社区博客：
+
 - Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
-- 只解析标准 RSS/Atom，不爬 HTML 页面
+
+媒体来源（`source_type=media`，同一事件去重时让位于官方源）：
+
+- TechCrunch AI RSS：`https://techcrunch.com/category/artificial-intelligence/feed/`
+- 量子位 RSS：`https://www.qbitai.com/feed`
+
+- 优先使用官方 RSS / Atom，其次官方公开页面，最后稳定媒体 RSS
+- 只接入已确认可稳定公开采集的来源；没有稳定 Feed、且页面结构不适合轻量解析的来源不接入
+- HTML 来源都在 `app/collectors/html.py` 中各自独立解析，任一来源失败只影响自身
+- 机器之心未接入：服务端对所有请求（含 `robots.txt` 中声明的 sitemap 与实际文章页）统一返回同一个 3251 字节的机器人拦截页，没有可用的 RSS 或文章列表
 - 日报不再按自然日归档，而按 **issue window** 归档：`window_start < published_at <= window_end`（左开右闭，UTC）
 - 窗口从「上一次成功日报的 cutoff」延续到「本次 refresh 时间」，所以 09-12 20:00 与 09-13 08:00 的新闻都进入 09-13 日报，09-13 08:00:01 的新闻不进入
 - 未来时间的文章一律不能进入当前日报（`window_end` 不会晚于 refresh 时间）
