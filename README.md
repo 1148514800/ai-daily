@@ -4,11 +4,11 @@
 
 ## 当前开发阶段
 
-Phase 10 - Local Deployment
+Phase 10.4 - Cross-source Event Dedup
 
 今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。
 
-当前阶段的目标是让整套系统在本地 Windows 电脑上长期运行，并生成可以直接安装到真机的 Android APK。App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
+当前阶段的目标是让同一个事件被多个来源报道时，日报只保留一条主新闻，而不是连续出现三条重复内容。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
 ## 目录结构
 
@@ -158,7 +158,7 @@ npm test
 - 未来时间的文章一律不能进入当前日报（`window_end` 不会晚于 refresh 时间）
 - 第一份日报默认覆盖过去 24h：`window_start = refresh 时间 - 24h`
 - 来源失败互相隔离：单个源超时或解析失败时，其余源仍会生成日报
-- 当前只做保守规则去重（canonical URL、48 小时内完全相同标题），没有语义级事件聚类
+- 去重分两层：先做保守规则去重（canonical URL、48 小时内完全相同标题），再做保守的事件级去重（见 "跨来源事件去重"）
 - RSS 是事实来源；LLM 只负责中文标题、摘要、Why it matters 和重要度评分
 - LLM 失败或关闭时回退到 RSS 原文，服务仍可启动
 - 成功结果写入本地磁盘 Cache（backend/.cache/），避免重复消耗 Token
@@ -190,28 +190,32 @@ uv run python -m app.collectors.refresh
 会打印每个来源的抓取数量、GitHub 筛选结果，以及数据库写入情况：
 
 ```text
-Total:
-Fetched: X
-Valid: X
-Last 24h: X
+Sources
+OpenAI: X
+Anthropic: X
+Google DeepMind: X
+...
+量子位: X
+Candidates: X
 After dedup: X
 
-Candidates: X
-LLM:
-Success: X
-Cache hit: X
-Fallback: X
-Failed: X
-[92] OpenAI | title_cn
+Event dedup:
+Candidates: 12
+Clusters: 12
+Duplicates merged: 0
 
-Digest saved: 2026-09-12
-News: 3
-GitHub: 1
+GitHub Trending
+Fetched: X
+...
+
+Digest saved: 2026-09-13
+News: 12
+GitHub: 5
 
 Database
-Daily digests: 1
-News total: 3
-GitHub repos total: 1
+Daily digests: 2
+News total: 15
+GitHub repos total: 4
 ```
 
 GitHub 部分会打印筛选结果，默认只显示入选项目和拒绝数量：
@@ -289,6 +293,89 @@ uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
 - 不重新调用 RSS 或 LLM，也不删除任何 `news_articles` 原始记录
 - 只重建传入日期的日报关系，其他日期不受影响；GitHub 关联保持不变
 - 命令幂等，可重复执行
+
+## 跨来源事件去重
+
+同一件事常被多个来源分别报道：OpenAI 官方发布一个模型，TechCrunch 报道它，量子位再转述一次。规则去重（canonical URL、48 小时内完全相同标题）看不见这种重复，日报里就会出现三条几乎一样的新闻。
+
+`app/services/event_dedup.py` 在规则去重之后再加一层**保守、可解释、确定性**的事件级去重，只影响 `daily_digest_news` 关联：
+
+```text
+规则去重 -> 事件去重 -> 日报关联
+```
+
+- 不使用 embedding、向量数据库、RAG 或额外 LLM 调用，refresh 成本与可复现性不变
+- **不删除任何新闻**：所有采集到的文章仍然写入 `news_articles`，只是不再重复出现在同一份日报里，方便将来做详情页、来源追踪和重新聚类
+
+### 聚类规则
+
+先做两个否决判断，再做文本相似度判断，任何一步不通过就保持两条新闻：
+
+1. **时间窗口**：两条新闻必须同为有时间的新闻，且发布时间相差不超过 48 小时（与规则去重同一时间尺度）
+2. **版本否决**：两条标题/正文各自出现的「带数字的标识」如果完全不同，直接否决。`GPT-5` 与 `GPT-6`、5 亿美元与 8 亿美元都是两个事件
+3. **立场否决**：出现相反结果的词对（`fails`/`passes`、`drops`/`rises`、`launch`/`deprecate` 等）直接否决，因为这是对同一话题的两次不同报道
+4. **文本相似度**（Sørensen-Dice，token 为拉丁词 + 数字 + 中文二元组）：
+   - 有正文：`body_similarity >= 0.62`，且标题相似度达到 `0.45`（有共同标识时降到 `0.30`）
+   - 无正文（只有标题）：标题相似度必须达到 `0.90`，且共享一个标识
+   - 跨语言特例：标题相似度 `>= 0.70` 且共享同一个「有名字的数字」（如 `500m`）时，正文门槛降到 `0.45`。两种语言转述同一事实时摘要用词差得更远
+
+所有阈值集中在 `EventDedupSettings`，默认值如下：
+
+```text
+max_hours_apart              = 48.0
+body_min                     = 0.62
+title_min                    = 0.45
+title_min_with_shared_term   = 0.30
+title_exact_threshold        = 0.90
+title_relaxed_min            = 0.70
+body_min_with_shared_figure  = 0.45
+```
+
+判断结果永远是「为什么」而不是一个不透明的分数，例如 `reason=shared_term_text_similarity score=0.72 shared=gpt-6 hours_apart=2.0`。
+
+### 主新闻选择
+
+一个事件簇里最终保留哪条，按顺序比较：
+
+```text
+官方一手源 > 社区一手内容（Hugging Face）> 媒体（TechCrunch / 量子位）
+```
+
+同类来源内依次比较：来源配置的 priority、`importance_score`、内容完整程度（摘要长度）、更早的发布时间（原始公告），最后用 news_id 兜底，所以结果永远不取决于抓取顺序。
+
+### 可观察性
+
+刷新日志默认只加一行统计：
+
+```text
+event dedup: candidates=12 clusters=12 merged=0
+```
+
+命令行会打印同样的汇总：
+
+```text
+Event dedup:
+Candidates: 12
+Clusters: 12
+Duplicates merged: 0
+```
+
+设置 `AI_DAILY_DEBUG_EVENT_DEDUP=1` 可以看到每个簇的 `KEEP` / `MERGE` 详情与原因（日志级别仍为 INFO，默认不刷屏）：
+
+```text
+KEEP OpenAI: OpenAI 发布 GPT-6 Astra 新模型
+MERGE TechCrunch AI: OpenAI 推出 GPT-6 Astra 前沿模型
+  reason=shared_term_text_similarity score=0.72 shared=gpt-6 hours_apart=2.0
+```
+
+`uv run python -m app.collectors.refresh` 在 `AI_DAILY_DEBUG_GITHUB=1` 时会一并打印这些细节。
+
+### 已知限制
+
+- 阈值是规则而非语义理解：换个说法的两条新闻可能仍然判为两个事件（宁可少合并，也不要错误合并，合并错了会静默隐藏一条真新闻）
+- 中文按字符二元组比较，对同义改写（「发布」/「推出」）不敏感
+- 同一事件跨越 48 小时的两篇报道不会合并
+- 只在写入 `daily_digest_news` 前运行，`news_articles` 不参与聚类，也不做跨日重新聚类
 
 ## 每日自动刷新
 

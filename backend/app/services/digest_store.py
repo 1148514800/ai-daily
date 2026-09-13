@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timezone
 
 from app.collectors.rss import CollectResult, collect_all_sources
@@ -14,12 +15,19 @@ from app.services.digest_window import (
     as_utc,
     resolve_window,
 )
+from app.services.event_dedup import EventDedupStats, dedupe_events, log_event_dedup
 from app.services.llm import EnrichmentStats, enrich_articles
 
 logger = logging.getLogger(__name__)
 
 DIGEST_TITLE = "今日 AI 日报"
 EMPTY_DESCRIPTION = "今天还没有新的 AI 资讯。"
+EVENT_DEBUG_ENV = "AI_DAILY_DEBUG_EVENT_DEDUP"
+
+
+def _event_debug_enabled() -> bool:
+    """Per-cluster event dedup logging, opt-in so default logs stay short."""
+    return os.getenv(EVENT_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _iso(moment: datetime | None) -> str | None:
@@ -64,6 +72,7 @@ class DigestStore:
         self.last_reports: list[CollectResult] = []
         self.last_recent_count: int = 0
         self.last_llm_stats: EnrichmentStats = EnrichmentStats()
+        self.last_event_stats: EventDedupStats = EventDedupStats()
         self.last_saved_date: str | None = None
         self.last_news_count: int = 0
         self.last_github_count: int = 0
@@ -233,7 +242,15 @@ class DigestStore:
             # replacing it, so earlier news stays linked, in its original order,
             # ahead of the newly collected items.
             candidates = _ordered_unique_by_id(repository.get_news(date) + collected)
-            merged = self._within_window(window, candidates)
+            in_window = self._within_window(window, candidates)
+            # Second dedup layer: one event, one linked entry. It runs on the
+            # whole linked set rather than only this run's collection, so a
+            # later refresh that re-collects one side of an event cannot
+            # reintroduce the duplicate. Both original rows stay in
+            # news_articles; only the digest link is folded.
+            merged, event_stats = dedupe_events(in_window)
+            self.last_event_stats = event_stats
+            log_event_dedup(event_stats, debug=_event_debug_enabled())
             merged_ids = [item.id for item in merged]
             # Every collected article is stored, even one outside this window:
             # only the digest link is window-restricted, so an article is never

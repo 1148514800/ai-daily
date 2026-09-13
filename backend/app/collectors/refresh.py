@@ -6,6 +6,7 @@ import sys
 from app.db.session import init_db
 from app.jobs.daily_refresh import run_manual_refresh
 from app.services.digest_store import store
+from app.services.event_dedup import format_event_dedup
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
@@ -106,6 +107,18 @@ def main() -> None:
     print(f"After dedup: {article_stats.candidates}")
     if failed:
         print(f"Failed: {', '.join(failed)}")
+    print()
+
+    event_stats = store.last_event_stats
+    print("Event dedup:")
+    print(f"Candidates: {event_stats.candidates}")
+    print(f"Clusters: {event_stats.clusters}")
+    print(f"Duplicates merged: {event_stats.merged}")
+    if debug:
+        for decision in event_stats.decisions:
+            print()
+            for line in format_event_dedup(decision).splitlines():
+                print(line)
     print()
 
     print("GitHub Trending")

@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.3（扩展 AI 信息源）
+Current Phase: Phase 10.4 - Cross-source Event Dedup
 
 Completed:
 - 项目初始化
@@ -20,11 +20,12 @@ Completed:
 - 日报日期归属修复：future timestamp bug + natural-day invariant + 历史日报重建（Phase 10.1）
 - 日报改为 Issue Window（Since Last Successful Digest）：daily_digests 新增 window_start / window_end（UTC），窗口为 (window_start, window_end]（Phase 10.2）
 - 扩展 AI 信息源：从 3 个 RSS 升级为 11 个来源（8 官方 + 1 社区博客 + 2 媒体），新增 HTML 采集器与统一 source 配置（Phase 10.3）
+- 跨来源事件去重：规则去重之后新增事件级去重，同一事件的多个来源只保留一条主新闻（Phase 10.4）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite
+- 来源 -> Collector（RSS 或官方页面 HTML）-> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> LLM enrich -> SQLite -> event dedup -> daily_digest_news
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
@@ -34,6 +35,13 @@ Current Architecture:
 - 漏跑一天不丢内容：窗口从「上一次成功 cutoff」延续，而不是固定最近 24h
 - 同日二次 refresh 是合并而非覆盖：旧链接保留在前，新链接按 news_id 去重追加，window_start 不变、window_end 前移
 - 写入前有最终防线：DigestStore.persist() 在写 daily_digest_news 之前对最终 id 列表再校验一次窗口，窗口外文章仍保存在 news_articles，但不建立关联
+- 跨来源事件去重（app/services/event_dedup.py）：规则去重之后的第二层，在同一 issue window 内把「同一事件的多来源报道」折叠为一条主新闻
+- 事件判断不使用 embedding / 向量库 / RAG / 额外 LLM 调用，只用 title / title_cn / summary / why_it_matters / published_at 做确定性判断
+- 判断顺序：先否决（两条都有时间且相差 <= 48h、版本标识不矛盾、立场词不相反），再用 Sørensen-Dice 文本相似度阈值判定
+- 主新闻优先级：官方一手源 > 社区一手（Hugging Face）> 媒体；同类内依次比较 source priority、importance_score、内容完整度、更早发布时间，最后用 news_id 兜底
+- 事件去重只影响 daily_digest_news；所有文章仍写入 news_articles，不物理删除重复新闻
+- 事件去重运行在「该日报已链接的全部新闻」上，而不是本次采集结果，所以二次 refresh 不会重新引入已折叠的重复项
+- 观察性：日志默认一行汇总（candidates / clusters / merged），AI_DAILY_DEBUG_EVENT_DEDUP=1 或 refresh CLI 的 --debug 才打印每个簇的 KEEP / MERGE 与 reason/score
 - 一次性修复命令：uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13，只读 news_articles 重建 daily_digest_news，不调用 RSS / LLM，不删除原始记录；窗口优先用日报已存的 window，否则按 DAILY_REFRESH_HOUR + APP_TIMEZONE 推导为 (cutoff(D-1), cutoff(D)]
 - Scheduler：进程内 APScheduler（AsyncIOScheduler）+ FastAPI lifespan，默认每天 08:00（APP_TIMEZONE）执行 refresh_all()
 - RefreshRun：refresh_runs 表记录 manual / scheduled / startup_catchup 的执行状态，只存简短错误
@@ -76,8 +84,17 @@ Not in scope（Phase 10.3）:
 - 未改日报时间模型（仍为 Phase 10.2 的 issue window），未改 Mobile，未启用 Push，未做云部署
 - 未接入机器之心：服务端对所有请求统一返回同一个机器人拦截页，没有可用 RSS 或文章列表
 
+Not in scope（Phase 10.4）:
+- 未引入 embedding / 向量数据库 / RAG / 额外 LLM 调用，事件去重是确定性规则
+- 未改 Scheduler 每天 08:00 的语义，未改 issue window，未改 Mobile API contract，未改收藏 / GitHub Trending / Push / 本地部署
+- 未引入 Alembic，未新增数据库表或列（事件去重只改 daily_digest_news 的内容）
+- 未做跨日重新聚类：事件去重只在写入某份日报前运行，历史日报不自动重算
+
 Known Issues:
-- 无语义级事件聚类
+- 事件去重是规则而非语义理解：换个说法的同一事件可能仍判为两条（宁可少合并，也不错误合并，错误合并会静默隐藏一条真新闻）
+- 中文按字符二元组比较，对同义改写（如「发布」/「推出」）不敏感
+- 同一事件跨越 48 小时的两篇报道不会合并
+- 事件去重只作用于 daily_digest_news，news_articles 不做重新聚类，历史日报也不自动重算
 - 机器之心当前无法稳定自动采集，尚未接入；后续若出现官方 Feed 可再评估
 - Meta AI 接入的是 Meta Engineering 的 AI Research 分类 Feed，而非 ai.meta.com 的产品博客（后者没有官方 RSS，且列表页日期需从卡片上下文推断）
 - Anthropic / DeepSeek / Kimi 依赖官方页面结构；页面改版时该来源会记为 failed，并在日志中明确标出，不影响其他来源
