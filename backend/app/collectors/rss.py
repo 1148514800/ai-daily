@@ -10,11 +10,13 @@ import httpx
 
 from app.collectors.raw import RawArticle
 from app.config.sources import RSSSource, enabled_sources
+from app.config.timezone import digest_date_for
 from app.models import NewsItem
 from app.pipelines.normalize import news_item_from_raw
 from app.pipelines.urls import canonicalize_url
 
 DEFAULT_TIMEOUT = 10.0
+DEFAULT_WINDOW_HOURS = 24
 USER_AGENT = "ai-daily/0.1 (+https://github.com/1148514800/ai-daily)"
 
 
@@ -176,24 +178,43 @@ def collect_all_sources(*, timeout: float = DEFAULT_TIMEOUT, fetch_text=None) ->
     return results
 
 
-def within_last_hours(item: NewsItem, now: datetime, hours: int = 24) -> bool:
+def _as_utc(moment: datetime) -> datetime:
+    """Read a naive datetime as UTC, matching how collectors store times."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def within_last_hours(item: NewsItem, now: datetime, hours: int = DEFAULT_WINDOW_HOURS) -> bool:
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     try:
         published = datetime.fromisoformat(item.published_at)
     except ValueError:
         return False
-    if published.tzinfo is None:
-        published = published.replace(tzinfo=timezone.utc)
-    return now - published <= timedelta(hours=hours)
+    delta = _as_utc(now) - _as_utc(published)
+    # A future timestamp yields a negative delta and must never be a candidate,
+    # even though "now - published <= 24h" would happily accept it.
+    return timedelta(0) <= delta <= timedelta(hours=hours)
 
 
-def article_within_last_hours(article: RawArticle, now: datetime, hours: int = 24) -> bool:
+def article_within_last_hours(article: RawArticle, now: datetime, hours: int = DEFAULT_WINDOW_HOURS) -> bool:
     if article.published_at is None:
         return False
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    published = article.published_at
-    if published.tzinfo is None:
-        published = published.replace(tzinfo=timezone.utc)
-    return now - published <= timedelta(hours=hours)
+    published = _as_utc(article.published_at)
+    delta = _as_utc(now) - published
+    return timedelta(0) <= delta <= timedelta(hours=hours)
+
+
+def belongs_to_digest_date(published_at: datetime | None, digest_date: str) -> bool:
+    """True when an article's instant falls on the given APP_TIMEZONE day.
+
+    The daily digest is a calendar-day report, so an article belongs to exactly
+    one day: the local date its published_at converts to. A rolling 24h window
+    must never pull a neighbouring day's article into today's digest.
+    """
+    if published_at is None:
+        return False
+    return digest_date_for(published_at) == digest_date

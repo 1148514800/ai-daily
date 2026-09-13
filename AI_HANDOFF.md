@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10
+Current Phase: Phase 10.1（日报日期归属修复）
 
 Completed:
 - 项目初始化
@@ -17,15 +17,19 @@ Completed:
 - 每日自动刷新、刷新记录与启动补偿（Phase 8）
 - Android 日报 Push 通知（Phase 9）
 - 本地长期部署、可配置 Backend URL 与可安装 APK（Phase 10）
+- 日报日期归属修复：future timestamp bug + natural-day invariant + 历史日报重建（Phase 10.1）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- RSS -> Collector -> 24h filter -> rule dedup -> LLM enrich -> SQLite
+- RSS -> Collector -> 24h window（0 <= now - published <= 24h，未来时间直接剔除）-> natural-day filter -> rule dedup -> LLM enrich -> SQLite
 - GitHub Trending HTML -> AI filter (strong/weak + strict fallback) -> GitHub REST metadata -> optional LLM enrich -> SQLite
 - Database -> API -> Mobile：数据库是唯一 source of truth，API 读取全部来自 SQLite
 - SQLAlchemy 2.x + SQLite（backend/data/ai_daily.db），表结构由 metadata.create_all() 初始化，暂不引入 Alembic
-- 日报日期按 APP_TIMEZONE（默认 Asia/Shanghai）计算，采集时间仍保存 UTC
+- 日报日期按 APP_TIMEZONE（默认 Asia/Shanghai）计算，published_at 仍保存 UTC
+- 日期归属是 invariant：一条新闻只属于 published_at 转成 APP_TIMEZONE 后的那个自然日；rolling 24h 只用于剔除过旧文章，不会让相邻日期进同一日报
+- 写入前有最终防线：DigestStore.persist() 在创建 daily_digest_news 关联前再次校验 news 的 local date == digest date，不符合就不建立关联（article 行本身仍保存）
+- 一次性修复命令：uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13，只读 news_articles 重建 daily_digest_news，不调用 RSS / LLM，不删除原始记录
 - Scheduler：进程内 APScheduler（AsyncIOScheduler）+ FastAPI lifespan，默认每天 08:00（APP_TIMEZONE）执行 refresh_all()
 - RefreshRun：refresh_runs 表记录 manual / scheduled / startup_catchup 的执行状态，只存简短错误
 - Startup catch-up：启动时若已过计划时间且今天没有成功刷新，则后台补跑一次，不阻塞启动
@@ -54,8 +58,13 @@ Push（产品决策，不是缺陷）:
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
 
+Not in scope（产品设计问题，与本阶段 bug 修复无关，明确未实现）:
+- 48h multi-date archive / previous-day automatic backfill / 跨多日报自动 merge
+- 未修改 scheduler 时间语义，未修改 Today 页语义
+
 Known Issues:
 - 无语义级事件聚类
+- 历史 future-timestamp bug 造成的跨日污染需要手动跑一次 rebuild_digests 修复（不会自动 backfill）
 - GitHub 强关键词列表仍需按实际误报迭代
 - 未配置 GITHUB_TOKEN 时 REST metadata 易被匿名 rate limit 限制，此时自动使用 strict fallback
 - Scheduler 为进程内实现，仅支持单 worker；多 worker / 云部署需要外部 Scheduler

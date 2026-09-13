@@ -4,21 +4,21 @@
   <entry>
     <title>Cool Model Card</title>
     <id>https://huggingface.co/blog/cool-model</id>
-    <updated>2026-09-10T11:00:00Z</updated>
+    <updated>2026-09-10T16:15:00Z</updated>
     <summary>How to publish a useful model card.</summary>
   </entry>
   <entry>
     <title>Datasets for evals</title>
     <link href="https://huggingface.co/blog/eval-datasets?utm_source=rss&amp;utm_medium=feed"/>
     <id>https://huggingface.co/blog/eval-datasets</id>
-    <updated>2026-09-10T14:00:00Z</updated>
+    <updated>2026-09-10T16:45:00Z</updated>
     <summary>A look at evaluation datasets.</summary>
   </entry>
   <entry>
     <title>Datasets for evals</title>
     <link href="https://huggingface.co/blog/eval-datasets/"/>
     <id>tag:huggingface.co,2026:eval-datasets</id>
-    <updated>2026-09-10T14:05:00Z</updated>
+    <updated>2026-09-10T16:50:00Z</updated>
     <summary>Duplicate with trailing slash.</summary>
   </entry>
 </feed>

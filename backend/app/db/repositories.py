@@ -139,6 +139,11 @@ class NewsRepository:
     def exists(self, news_id: str) -> bool:
         return self.session.get(NewsArticleRow, news_id) is not None
 
+    def list_all(self) -> list[NewsItem]:
+        """Every stored article, oldest first. Used by the digest rebuild job."""
+        statement = select(NewsArticleRow).order_by(NewsArticleRow.published_at, NewsArticleRow.id)
+        return [_news_row_to_item(row) for row in self.session.scalars(statement).all()]
+
     def count(self) -> int:
         return int(self.session.scalar(select(func.count()).select_from(NewsArticleRow)) or 0)
 

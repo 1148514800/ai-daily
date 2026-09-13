@@ -1,15 +1,19 @@
 from datetime import datetime, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config.timezone import app_timezone
 from app.db.session import configure_database, init_db, reset_database
 from app.services.github_client import RepoMetadata
 
-# 2026-09-10 20:00 UTC is 2026-09-11 04:00 in Asia/Shanghai, which keeps the
-# 24h collector window stable while exercising timezone-aware digest dates.
+# 2026-09-10 20:00 UTC is 2026-09-11 04:00 in Asia/Shanghai. The fixture feeds
+# in this directory publish just after 2026-09-11 00:00 Asia/Shanghai, so they
+# are both inside the 24h window and on the same local calendar day as the
+# digest date below.
 FROZEN_NOW = datetime(2026, 9, 10, 20, 0, tzinfo=timezone.utc)
 FROZEN_DIGEST_DATE = "2026-09-11"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -17,6 +21,77 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def read_fixture(name: str) -> str:
     return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+def build_rss(items: list[tuple[str, str, datetime]]) -> str:
+    """Build a minimal RSS feed from (title, url, published_at) tuples.
+
+    Date-boundary tests state their publish times explicitly instead of
+    mutating a shared fixture, so each case reads as the scenario it checks.
+    """
+    entries = "\n".join(
+        f"    <item>\n"
+        f"      <title>{title}</title>\n"
+        f"      <link>{url}</link>\n"
+        f"      <guid isPermaLink=\"true\">{url}</guid>\n"
+        f"      <pubDate>{format_datetime(published)}</pubDate>\n"
+        f"    </item>"
+        for title, url, published in items
+    )
+    return (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<rss version=\"2.0\">\n"
+        "  <channel>\n"
+        "    <title>Test Feed</title>\n"
+        "    <link>https://openai.com/news</link>\n"
+        f"{entries}\n"
+        "  </channel>\n"
+        "</rss>\n"
+    )
+
+
+def utc_on_local_day(local_date: str, hour: int = 1) -> datetime:
+    """The UTC instant for ``hour`` on a date in APP_TIMEZONE."""
+    local = datetime.strptime(local_date, "%Y-%m-%d").replace(hour=hour, tzinfo=app_timezone())
+    return local.astimezone(timezone.utc)
+
+
+def day_feeds(local_date: str, *, hour: int = 1) -> tuple[str, str, str]:
+    """Three source feeds whose articles publish on one APP_TIMEZONE day.
+
+    Used by adjacent-day tests: each day has its own URLs, so the two days
+    produce genuinely different news_ids and any overlap is a real defect.
+    """
+    stamp = utc_on_local_day(local_date, hour)
+    slug = local_date.replace("-", "")
+    openai = build_rss(
+        [
+            (
+                f"OpenAI story {local_date}",
+                f"https://openai.com/index/{slug}-openai",
+                stamp,
+            )
+        ]
+    )
+    deepmind = build_rss(
+        [
+            (
+                f"DeepMind story {local_date}",
+                f"https://deepmind.google/blog/{slug}-deepmind",
+                stamp,
+            )
+        ]
+    )
+    huggingface = build_rss(
+        [
+            (
+                f"Hugging Face story {local_date}",
+                f"https://huggingface.co/blog/{slug}-hf",
+                stamp,
+            )
+        ]
+    )
+    return openai, deepmind, huggingface
 
 
 @pytest.fixture

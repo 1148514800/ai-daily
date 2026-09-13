@@ -19,16 +19,11 @@ def collect_openai_news(*, url: str = OPENAI_RSS_URL, timeout: float = DEFAULT_T
 
 
 def main() -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     result = collect_openai_news()
     now = datetime.now(timezone.utc)
-    recent = [
-        item
-        for item in result.news_items
-        if item.published_at
-        and now - datetime.fromisoformat(item.published_at) <= timedelta(hours=24)
-    ]
+    recent = [item for item in result.news_items if within_last_hours(item, now)]
     print("OpenAI:")
     print(f"Fetched: {result.fetched}")
     print(f"Valid: {len(result.valid)}")

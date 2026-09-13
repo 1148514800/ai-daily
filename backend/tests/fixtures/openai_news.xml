@@ -9,14 +9,14 @@
       <description>A shorter official summary about the new model release.</description>
       <link>https://openai.com/index/gpt-6-astra</link>
       <guid isPermaLink="true">https://openai.com/index/gpt-6-astra</guid>
-      <pubDate>Wed, 10 Sep 2026 12:00:00 GMT</pubDate>
+      <pubDate>Thu, 10 Sep 2026 17:00:00 GMT</pubDate>
     </item>
     <item>
       <title>The AI policy window is open. We need to act.</title>
       <description>Chris Lehane argues that stronger AI capabilities require stronger safety evidence.</description>
       <link>https://openai.com/index/ai-policy-window</link>
       <guid isPermaLink="true">https://openai.com/index/ai-policy-window</guid>
-      <pubDate>Wed, 09 Sep 2026 21:00:00 GMT</pubDate>
+      <pubDate>Thu, 10 Sep 2026 16:00:00 GMT</pubDate>
     </item>
     <item>
       <title>Old research recap</title>
@@ -29,17 +29,17 @@
       <title>OpenAI Codex update without a summary</title>
       <link>https://openai.com/index/codex-update</link>
       <guid isPermaLink="true">https://openai.com/index/codex-update</guid>
-      <pubDate>Wed, 10 Sep 2026 15:30:00 GMT</pubDate>
+      <pubDate>Thu, 10 Sep 2026 19:30:00 GMT</pubDate>
     </item>
     <item>
       <description>Missing title should be skipped.</description>
       <link>https://openai.com/index/missing-title</link>
-      <pubDate>Wed, 10 Sep 2026 16:00:00 GMT</pubDate>
+      <pubDate>Thu, 10 Sep 2026 18:00:00 GMT</pubDate>
     </item>
     <item>
       <title>Missing link should be skipped</title>
       <description>No URL here.</description>
-      <pubDate>Wed, 10 Sep 2026 16:05:00 GMT</pubDate>
+      <pubDate>Thu, 10 Sep 2026 18:05:00 GMT</pubDate>
     </item>
     <item>
       <title>Broken date should be skipped</title>

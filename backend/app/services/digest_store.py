@@ -1,8 +1,13 @@
 import logging
 from datetime import datetime, timezone
 
-from app.collectors.rss import CollectResult, article_within_last_hours, collect_all_sources
-from app.config.timezone import digest_date_for, today_digest_date
+from app.collectors.rss import (
+    CollectResult,
+    article_within_last_hours,
+    belongs_to_digest_date,
+    collect_all_sources,
+)
+from app.config.timezone import digest_date_for, digest_date_for_iso, today_digest_date
 from app.db.repositories import DigestRepository, GitHubRepository, NewsRepository
 from app.db.session import new_session
 from app.models import DailyDigest, GitHubProject, NewsItem
@@ -49,10 +54,18 @@ class DigestStore:
 
     def collect_news(
         self,
+        date: str,
         now: datetime | None = None,
         fetch_text=None,
     ) -> tuple[list[NewsItem], list[CollectResult]]:
-        """Collect, filter, dedupe, and enrich news. Does not touch the database."""
+        """Collect, filter, dedupe, and enrich news for one digest date.
+
+        Two independent conditions must hold: the article is inside the rolling
+        24h window (which also rejects future timestamps) *and* its
+        APP_TIMEZONE calendar day is the digest date. The digest is a calendar
+        day report, so a neighbouring day's article never leaks in. Does not
+        touch the database.
+        """
         current = now or now_utc()
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
@@ -77,8 +90,17 @@ class DigestStore:
             merged.extend(report.valid)
 
         recent = [article for article in merged if article_within_last_hours(article, current)]
+        dated = [article for article in recent if belongs_to_digest_date(article.published_at, date)]
         self.last_recent_count = len(recent)
-        deduped = dedupe_articles(recent)
+        if len(dated) != len(recent):
+            logger.info(
+                "dropped %s articles outside digest date date=%s kept=%s window=%s",
+                len(recent) - len(dated),
+                date,
+                len(dated),
+                len(recent),
+            )
+        deduped = dedupe_articles(dated)
 
         try:
             news_items, llm_stats = enrich_articles(deduped)
@@ -114,7 +136,7 @@ class DigestStore:
             current = current.replace(tzinfo=timezone.utc)
         date = digest_date_for(current)
 
-        news_items, reports = self.collect_news(current, fetch_text)
+        news_items, reports = self.collect_news(date, current, fetch_text)
         self.persist(date=date, news_items=news_items, github_projects=github_projects)
         return reports
 
@@ -133,7 +155,8 @@ class DigestStore:
         """
         session = new_session()
         try:
-            if not news_items and DigestRepository(session).exists(date):
+            linked = self._only_on_date(date, news_items)
+            if not linked and DigestRepository(session).exists(date):
                 session.rollback()
                 self.last_kept_previous = True
                 self.last_saved_date = None
@@ -142,6 +165,9 @@ class DigestStore:
                 logger.warning("refresh produced no news; keeping existing digest date=%s", date)
                 return False
 
+            # Every collected article is stored, even one whose calendar day is
+            # not this digest's date: only the digest link is day-restricted, so
+            # an article is never lost because it arrived after its own day.
             NewsRepository(session).upsert_many(news_items)
             projects = github_projects or []
             repository = DigestRepository(session)
@@ -153,23 +179,23 @@ class DigestStore:
                 # to the day. Only a non-empty result replaces the ordering.
                 github_ids = repository.get_github_ids(date)
 
-            sources = sorted({item.source for item in news_items})
+            sources = sorted({item.source for item in linked})
             description = (
-                f"来自 {'、'.join(sources)} 的 {len(news_items)} 条更新。"
-                if news_items
+                f"来自 {'、'.join(sources)} 的 {len(linked)} 条更新。"
+                if linked
                 else EMPTY_DESCRIPTION
             )
             repository.save(
                 date=date,
                 title=DIGEST_TITLE,
                 description=description,
-                news_ids=[item.id for item in news_items],
+                news_ids=[item.id for item in linked],
                 github_ids=github_ids,
             )
             session.commit()
             self.last_kept_previous = False
             self.last_saved_date = date
-            self.last_news_count = len(news_items)
+            self.last_news_count = len(linked)
             self.last_github_count = len(github_ids)
             return True
         except Exception:
@@ -178,6 +204,23 @@ class DigestStore:
             raise
         finally:
             session.close()
+
+    def _only_on_date(self, date: str, news_items: list[NewsItem]) -> list[NewsItem]:
+        """Last line of defence before a digest-to-news link is written.
+
+        The collector already filters by calendar day, but every write path runs
+        through here, so a future caller cannot reintroduce cross-day news: an
+        article is only linked to the digest whose local date it belongs to.
+        """
+        kept = [item for item in news_items if digest_date_for_iso(item.published_at) == date]
+        dropped = len(news_items) - len(kept)
+        if dropped:
+            logger.warning(
+                "refused %s news items whose local date is not the digest date date=%s",
+                dropped,
+                date,
+            )
+        return kept
 
     def latest_date(self) -> str | None:
         session = new_session()

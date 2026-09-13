@@ -15,10 +15,13 @@ from app.db.repositories import (
 from app.db.session import new_session
 from app.models import GitHubProject, NewsCategory, NewsItem
 from app.services.digest_store import DigestStore, store
-from tests.conftest import FROZEN_NOW, make_fixture_fetch
+from tests.conftest import FROZEN_NOW, day_feeds, make_fixture_fetch
 
 UTC = timezone.utc
 
+# 2026-09-10 10:00 in Asia/Shanghai: the local day these tests write digests
+# for, so an article's calendar day matches the digest it is linked to.
+PERSISTED_AT = datetime(2026, 9, 10, 2, 0, tzinfo=UTC)
 
 def news_item(index: int, *, source: str = "OpenAI") -> NewsItem:
     return NewsItem(
@@ -29,7 +32,7 @@ def news_item(index: int, *, source: str = "OpenAI") -> NewsItem:
         why_it_matters="值得关注",
         source=source,
         source_type="official",
-        published_at=FROZEN_NOW.isoformat(),
+        published_at=PERSISTED_AT.isoformat(),
         category=NewsCategory.highlight,
         tags=[source],
         url=f"https://example.com/news/{index}",
@@ -333,22 +336,37 @@ def test_empty_github_result_keeps_linked_projects() -> None:
     assert [item.id for item in digest.news] == ["rss-0002"]
 
 
-def test_refresh_second_day_creates_new_digest(
-    openai_rss_xml: str,
-    deepmind_rss_xml: str,
-    huggingface_rss_xml: str,
-) -> None:
-    fetch = make_fixture_fetch(openai_rss_xml, deepmind_rss_xml, huggingface_rss_xml)
-
-    day_one = datetime(2026, 9, 10, 2, 0, tzinfo=UTC)
+def test_refresh_second_day_creates_new_digest() -> None:
+    """Each day publishes its own articles, so both digests get real news."""
+    day_one = FROZEN_NOW
     day_two = day_one + timedelta(days=1)
-    assert DigestStore().refresh(now=day_one, fetch_text=fetch)
-    assert DigestStore().refresh(now=day_two, fetch_text=fetch)
+    day_one_fetch = make_fixture_fetch(*day_feeds("2026-09-11"))
+    day_two_fetch = make_fixture_fetch(*day_feeds("2026-09-12"))
 
-    summaries = [(row[0], row[2]) for row in store.list_digest_summaries()]
-    assert [row[0] for row in summaries] == ["2026-09-11", "2026-09-10"]
-    assert store.get_digest("2026-09-10").news
+    assert DigestStore().refresh(now=day_one, fetch_text=day_one_fetch)
+    assert DigestStore().refresh(now=day_two, fetch_text=day_two_fetch)
+
+    summaries = [row[0] for row in store.list_digest_summaries()]
+    assert summaries == ["2026-09-12", "2026-09-11"]
     assert store.get_digest("2026-09-11").news
+    assert store.get_digest("2026-09-12").news
+
+
+def test_adjacent_digests_share_no_news() -> None:
+    """A news_id belongs to exactly one calendar day, never to two digests."""
+    day_one = FROZEN_NOW
+    day_two = day_one + timedelta(days=1)
+    day_one_fetch = make_fixture_fetch(*day_feeds("2026-09-11"))
+    day_two_fetch = make_fixture_fetch(*day_feeds("2026-09-12"))
+
+    DigestStore().refresh(now=day_one, fetch_text=day_one_fetch)
+    DigestStore().refresh(now=day_two, fetch_text=day_two_fetch)
+
+    first = {item.id for item in store.get_digest("2026-09-11").news}
+    second = {item.id for item in store.get_digest("2026-09-12").news}
+    assert first
+    assert second
+    assert first & second == set()
 
 
 def test_same_day_refresh_updates_not_duplicates(
@@ -357,7 +375,7 @@ def test_same_day_refresh_updates_not_duplicates(
     huggingface_rss_xml: str,
 ) -> None:
     fetch = make_fixture_fetch(openai_rss_xml, deepmind_rss_xml, huggingface_rss_xml)
-    moment = datetime(2026, 9, 10, 2, 0, tzinfo=UTC)
+    moment = FROZEN_NOW
     store.refresh(now=moment, fetch_text=fetch)
     store.refresh(now=moment + timedelta(hours=1), fetch_text=fetch)
 

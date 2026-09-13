@@ -133,7 +133,9 @@ npm test
 - Google DeepMind Blog RSS：`https://deepmind.google/blog/rss.xml`
 - Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
 - 只解析标准 RSS/Atom，不爬 HTML 页面
-- 最近 24 小时内的文章进入今日日报
+- 候选必须同时满足两个条件：`published_at <= now` 且 `now - published_at <= 24h`（即 `0 <= delta <= 24h`），未来时间的文章一律不能进入候选
+- 日报按 `APP_TIMEZONE` 自然日归档：文章先转成 `APP_TIMEZONE`，只有 local date 等于日报日期的那天才进入该日报
+- 因此 rolling 24h 只用来剔除过旧的文章，不会把相邻日期的新闻放进同一份日报
 - 来源失败互相隔离：单个源超时或解析失败时，其余源仍会生成日报
 - 当前只做保守规则去重（canonical URL、48 小时内完全相同标题），没有语义级事件聚类
 - RSS 是事实来源；LLM 只负责中文标题、摘要、Why it matters 和重要度评分
@@ -230,7 +232,8 @@ AI_DAILY_DEBUG_GITHUB=1 uv run python -m app.collectors.refresh
 - 数据库文件：`backend/data/ai_daily.db`（`backend/data/` 已加入 `.gitignore`，不会提交）
 - 连接串由环境变量 `DATABASE_URL` 控制，默认 `sqlite:///./data/ai_daily.db`
 - 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
-- 日报日期由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间仍以 UTC 保存
+- 日报日期由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间（`published_at`）仍以 UTC 保存
+- 一条新闻只属于一个自然日：`published_at` 转成 `APP_TIMEZONE` 后的 local date 决定它归属哪份日报
 - 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化
 
 存储内容：
@@ -249,6 +252,20 @@ push_devices         已注册的 Expo Push Token（单用户，token 唯一）
 同一天多次 refresh 只会更新当天日报，不会新增多条；第二天 refresh 会创建新的日报，历史保持不变。如果某次采集没有拿到任何新闻，会保留数据库中已有的当天日报，避免临时网络失败把日报清空。
 
 未来可迁移到 PostgreSQL 与多用户模型，但本阶段不实现。
+
+### 修复历史日报归属
+
+如果历史数据里存在跨日污染（例如未来时间或相邻日期的新闻进了某天日报），可以只根据数据库里已保存的 `news_articles` 重建日报关系：
+
+```bash
+cd backend
+uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
+```
+
+- 只读 `news_articles` 里的 `published_at`（UTC），转成 `APP_TIMEZONE` 重新判断自然日，再重建 `daily_digest_news` 关联
+- 不重新调用 RSS 或 LLM，也不删除任何 `news_articles` 原始记录
+- 只重建传入日期的日报关系，其他日期不受影响；GitHub 关联保持不变
+- 命令幂等，可重复执行
 
 ## 每日自动刷新
 

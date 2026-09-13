@@ -40,7 +40,7 @@ def refresh_all(
         current = current.replace(tzinfo=timezone.utc)
     date = digest_date_for(current)
 
-    news_items, reports = store.collect_news(current, fetch_text)
+    news_items, reports = store.collect_news(date, current, fetch_text)
     github_stats = github_store.refresh(
         fetch_text=fetch_trending,
         github_client=github_client,
