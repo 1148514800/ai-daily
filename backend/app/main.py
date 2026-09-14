@@ -1,5 +1,5 @@
 import logging
-import os
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.config.env import load_dotenv
+from app.config.environment import app_env, is_development
 from app.db.session import get_engine, init_db
 from app.jobs.scheduler import shutdown_scheduler, start_scheduler
 from app.services.news_search import BACKEND_LIKE, backend_label, ensure_index
@@ -14,8 +15,6 @@ from app.services.news_search import BACKEND_LIKE, backend_label, ensure_index
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-APP_ENV = os.getenv("APP_ENV", "development")
 
 
 @asynccontextmanager
@@ -39,8 +38,10 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="AI Daily API", version="0.1.0", lifespan=lifespan)
 
+logger.info("APP_ENV=%s", app_env())
+
 # Development-only CORS. Do not use wildcard origins in production.
-if APP_ENV == "development":
+if is_development():
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

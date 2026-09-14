@@ -1,11 +1,19 @@
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
+import os
+
+# Set before anything under ``app`` is imported. ``load_dotenv`` never overrides
+# a variable that is already set, so this also wins over a development ``.env``:
+# the whole process is a test process, and every ``APP_ENV`` read agrees.
+os.environ["APP_ENV"] = "test"
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config.database_safety import DEFAULT_DATABASE_FILE, is_default_database
+from app.config.environment import APP_ENV_TEST, app_env
 from app.config.timezone import app_timezone
 from app.config.sources import enabled_sources
 from app.db.session import configure_database, init_db, reset_database
@@ -280,15 +288,78 @@ def fake_github_metadata(owner: str, name: str) -> RepoMetadata | None:
     return catalog.get((owner, name), RepoMetadata(stars=1, forks=0, language="", license="", topics=(), description=""))
 
 
+def _assert_not_the_production_database(url: str) -> None:
+    """Refuse to run a test against the real database, loudly.
+
+    The whole suite exists to prove behaviour without touching production data,
+    so pointing it at ``backend/data/ai_daily.db`` is a defect in the test setup,
+    not a test failure to interpret: it fails with the reason spelled out. The
+    connection layer enforces the same rule, so this is the readable first line
+    of defence rather than the only one.
+    """
+    if is_default_database(url):
+        raise RuntimeError(
+            "tests must not use the production database "
+            f"({DEFAULT_DATABASE_FILE}); got DATABASE_URL={url!r}"
+        )
+
+
+@pytest.fixture
+def fake_default_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Repoint the production-database sentinel at a temporary file.
+
+    A few tests need to exercise the real guard path - refuse, then ``validate ->
+    backup -> execute`` with ``--allow-production``. They cannot use the actual
+    default file, so the sentinel itself is redirected. The production code is
+    unchanged and fully exercised; only the file it considers production differs.
+    """
+    from app.config import database_safety
+
+    fake = tmp_path / "fake_production.db"
+    monkeypatch.setattr(database_safety, "DEFAULT_DATABASE_FILE", fake)
+    # Re-check what the guard compares against, so a broken patch fails loudly.
+    assert database_safety.is_default_database(f"sqlite:///{fake.as_posix()}")
+    return fake
+
+
 @pytest.fixture(autouse=True)
 def use_temp_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Every test runs against a throwaway SQLite file, never the real one."""
     db_path = tmp_path / "test_ai_daily.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
-    configure_database(f"sqlite:///{db_path.as_posix()}")
+    url = f"sqlite:///{db_path.as_posix()}"
+    monkeypatch.setenv("APP_ENV", APP_ENV_TEST)
+    monkeypatch.setenv("DATABASE_URL", url)
+    configure_database(url)
+    # Checked after configuring, so a test that overrides the URL itself is held
+    # to the same rule as the fixture. Asserted before the test body so a test
+    # that deliberately switches APP_ENV is still allowed to do so.
+    _assert_not_the_production_database(url)
+    assert app_env() == APP_ENV_TEST
     init_db()
     yield
     reset_database()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def production_database_untouched():
+    """The whole run must leave the real database byte-identical.
+
+    Session-scoped and unconditional, because this is the one guarantee the test
+    suite makes about the machine it runs on. It is what turns "tests point
+    somewhere else" from a convention into something the run itself verifies.
+    """
+    from app.db import readonly
+
+    if not DEFAULT_DATABASE_FILE.exists():
+        yield
+        return
+    before = readonly.file_sha256(DEFAULT_DATABASE_FILE)
+    yield
+    after = readonly.file_sha256(DEFAULT_DATABASE_FILE)
+    assert after == before, (
+        "the test suite modified the production database "
+        f"({DEFAULT_DATABASE_FILE}); a test is not isolated"
+    )
 
 
 @pytest.fixture(autouse=True)

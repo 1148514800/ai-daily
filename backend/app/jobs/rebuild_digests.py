@@ -11,9 +11,13 @@ Window sources, in order:
 2. for a first run, the window derived from the configured daily cutoff
    (``DAILY_REFRESH_HOUR`` in ``APP_TIMEZONE``): ``(cutoff(D-1), cutoff(D)]``.
 
+This job writes the database, so it refuses to run against the production one
+unless ``--allow-production`` is given, and it backs that database up first.
+
 Usage:
 
     uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
+    uv run python -m app.jobs.rebuild_digests --dates 2026-09-13 --dry-run
 """
 
 from __future__ import annotations
@@ -24,6 +28,18 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from app.config.maintenance import (
+    EXIT_ABORTED,
+    EXIT_REFUSED,
+    MaintenanceError,
+    ProductionGuardError,
+    add_common_arguments,
+    begin,
+    format_header,
+    SCHEMA_ABSENT,
+    prepare_write,
+    schema_state,
+)
 from app.config.timezone import DIGEST_DATE_FORMAT, app_timezone_name
 from app.db.repositories import DigestRepository, NewsRepository
 from app.db.session import init_db, new_session
@@ -108,11 +124,14 @@ def _describe(items: list[NewsItem], news_ids: list[str]) -> str:
     return f"来自 {source_list} 的 {len(news_ids)} 条更新。"
 
 
-def rebuild_dates(dates: list[str]) -> list[RebuildResult]:
+def rebuild_dates(dates: list[str], *, apply: bool = True) -> list[RebuildResult]:
     """Recompute digest membership for ``dates`` from stored articles.
 
     A digest that already carries a window keeps it, so rebuilding is idempotent
     and never silently widens a digest that was built at a non-default time.
+
+    With ``apply=False`` the same diff is computed and returned but nothing is
+    written, which is what ``--dry-run`` reports.
     """
     session = new_session()
     try:
@@ -130,20 +149,22 @@ def rebuild_dates(dates: list[str]) -> list[RebuildResult]:
             rank_scores = {entry.news_id: entry.rank_score for entry in ranking}
             # The window is always written, even for an empty day, so later
             # refreshes continue from this cutoff instead of a fixed lookback.
-            repository.save(
-                date=date,
-                title=DIGEST_TITLE,
-                description=_describe(selected, selected_ids),
-                news_ids=selected_ids,
-                github_ids=repository.get_github_ids(date),
-                window_start=window.start,
-                window_end=window.end,
-                rank_scores=rank_scores,
-            )
+            if apply:
+                repository.save(
+                    date=date,
+                    title=DIGEST_TITLE,
+                    description=_describe(selected, selected_ids),
+                    news_ids=selected_ids,
+                    github_ids=repository.get_github_ids(date),
+                    window_start=window.start,
+                    window_end=window.end,
+                    rank_scores=rank_scores,
+                )
             results.append(
                 RebuildResult(date=date, window=window, before=before, after=selected_ids)
             )
-        session.commit()
+        if apply:
+            session.commit()
         return results
     except Exception:
         session.rollback()
@@ -155,6 +176,7 @@ def rebuild_dates(dates: list[str]) -> list[RebuildResult]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Rebuild daily digest membership from stored articles")
     parser.add_argument("--dates", required=True, help="comma separated YYYY-MM-DD list")
+    add_common_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
@@ -168,11 +190,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}")
         return 2
 
-    init_db()
+    try:
+        context = begin("rebuild_digests", args)
+    except ProductionGuardError as exc:
+        print(str(exc))
+        return EXIT_REFUSED
+
+    print(format_header(context))
     print(f"Timezone: {app_timezone_name()}")
     print(f"Dates: {', '.join(dates)}")
     print()
-    for result in rebuild_dates(dates):
+
+    if context.dry_run and schema_state(context.target) == SCHEMA_ABSENT:
+        # Nothing to compare against: say so rather than failing on a table that
+        # was never created, and leave the file alone.
+        print("Dry run: no changes made")
+        print("Database has no AI Daily schema yet.")
+        return 0
+
+    if not context.dry_run:
+        try:
+            prepare_write(context)
+        except MaintenanceError as exc:
+            print(f"Aborted: {exc}")
+            return EXIT_ABORTED
+        # Schema work is part of writing, so a dry run never calls this: it must
+        # not create tables, columns or a search index.
+        init_db()
+
+    for result in rebuild_dates(dates, apply=not context.dry_run):
         print(f"{result.date}: {len(result.before)} -> {len(result.after)}")
         print(f"  window: {result.window.start.isoformat()} .. {result.window.end.isoformat()}")
         if result.removed:
@@ -182,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         for news_id in result.after:
             print(f"  kept: {news_id}")
         print()
+    if context.dry_run:
+        print("Dry run: no changes made")
     return 0
 
 

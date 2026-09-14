@@ -11,10 +11,14 @@ misses one, and writes it back. Nothing else changes:
   interrupted run resumes where it stopped;
 * one unreadable page only skips that article.
 
+This job writes the database, so it refuses to run against the production one
+unless ``--allow-production`` is given, and it backs that database up first.
+
 Usage:
 
     uv run python -m app.jobs.backfill_article_content --limit 20
     uv run python -m app.jobs.backfill_article_content --date 2026-09-12
+    uv run python -m app.jobs.backfill_article_content --limit 20 --dry-run
 """
 
 from __future__ import annotations
@@ -26,6 +30,18 @@ from datetime import timezone
 from typing import Callable
 
 from app.collectors.raw import RawArticle
+from app.config.maintenance import (
+    EXIT_ABORTED,
+    EXIT_REFUSED,
+    MaintenanceError,
+    ProductionGuardError,
+    add_common_arguments,
+    begin,
+    format_header,
+    SCHEMA_ABSENT,
+    prepare_write,
+    schema_state,
+)
 from app.db.models import NewsArticleRow
 from app.db.repositories import NewsRepository
 from app.db.session import init_db, new_session
@@ -68,6 +84,23 @@ def window_bounds(date: str) -> tuple:
     """The UTC interval of the digest dated ``date``, from the configured cutoff."""
     window = historical_window(date)
     return (window.start, window.end)
+
+
+def list_targets(limit: int | None = None, date: str | None = None) -> list[str]:
+    """The ids a backfill would visit, read without extracting or writing.
+
+    Used by ``--dry-run`` so the reported scope is the real one rather than a
+    guess, and cheap because it selects ids only.
+    """
+    session = new_session()
+    try:
+        rows = NewsRepository(session).list_missing_content(
+            limit=limit,
+            published_between=window_bounds(date) if date else None,
+        )
+        return [row.id for row in rows]
+    finally:
+        session.close()
 
 
 def backfill(
@@ -140,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None, help="stop after this many articles")
     parser.add_argument("--date", default=None, help="only articles inside this digest's window")
     parser.add_argument("--quiet", action="store_true", help="print only the final summary")
+    add_common_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
@@ -147,13 +181,41 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, ValueError):
         pass
 
-    init_db()
+    try:
+        context = begin("backfill_article_content", args)
+    except ProductionGuardError as exc:
+        print(str(exc))
+        return EXIT_REFUSED
+
+    print(format_header(context))
     print("Article content backfill")
     if args.date:
         print(f"Date: {args.date}")
     if args.limit:
         print(f"Limit: {args.limit}")
     print()
+
+    if not context.dry_run:
+        try:
+            prepare_write(context)
+        except MaintenanceError as exc:
+            print(f"Aborted: {exc}")
+            return EXIT_ABORTED
+        # Schema work belongs to a real write; a dry run must not touch the file.
+        init_db()
+
+    if context.dry_run:
+        if schema_state(context.target) == SCHEMA_ABSENT:
+            print("Dry run: no changes made")
+            print("Would scan: 0")
+            return 0
+        targets = list_targets(limit=args.limit, date=args.date)
+        for news_id in targets:
+            print(f"WOULD EXTRACT {news_id}")
+        print()
+        print("Dry run: no changes made")
+        print(f"Would scan: {len(targets)}")
+        return 0
 
     def progress(line: str) -> None:
         if not args.quiet:

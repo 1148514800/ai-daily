@@ -4,7 +4,7 @@
 
 ## 当前开发阶段
 
-Phase 10.9 - Global News Search
+Phase 10.10 - Environment Safety + Release Readiness
 
 今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页分为**今日必看 / 重点新闻 / 更多动态**三层，可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
 
@@ -124,7 +124,16 @@ npx tsc --noEmit
 npm test
 ```
 
+发布前统一检查（后端跑测试 + release_check，Mobile 跑类型检查 + 测试 + bundle export）：
+
+```powershell
+.\scripts\check_backend.ps1
+.\scripts\check_mobile.ps1
+```
+
 开发环境开启了宽松 CORS，仅用于本地联调，生产环境不要使用 `allow_origins=["*"]`。
+
+> 维护命令（rebuild / backfill）会写数据库，因此受 production guard 保护：默认拒绝操作 `backend/data/ai_daily.db`，需要显式 `--allow-production` 并会先自动备份。详见 [环境隔离与维护命令安全](#环境隔离与维护命令安全phase-1010)。
 
 
 ## 当前真实来源
@@ -628,7 +637,9 @@ uv run python -m app.jobs.rebuild_search_index
 ```
 
 ```text
-Search backend: FTS5 (trigram)
+Environment: development
+Database:    F:\study\ai-daily\backend\data\ai_daily.db
+Mode:        execute
 
 Search index rebuilt
 Articles: 1234
@@ -637,6 +648,7 @@ Indexed: 1234
 
 - 幂等，可安全重复执行
 - 只读 `news_articles`，只写索引：不抓 RSS、不调 LLM、不删文章、**不修改 digest 关联**
+- 写数据库，因此受维护命令 guard 保护（见 [环境隔离与维护命令安全](#环境隔离与维护命令安全phase-1010)）
 
 ### Search API
 
@@ -717,6 +729,180 @@ DeepSeek 发布 V4.1
 - Backend 失败：沿用「无法连接 AI Daily 服务」+「重新尝试」
 - 点击结果进入**现有** `NewsDetailScreen`，中文摘要 / Why it matters / 原语言正文 / 查看原文 / 收藏全部照旧
 - 本阶段不做搜索历史（不写 SQLite、不写 AsyncStorage）
+
+## 环境隔离与维护命令安全（Phase 10.10）
+
+Phase 10.10 不新增产品功能，只解决一件事：**让维护命令无法再误操作正式数据库。**
+
+背景是一次真实事故：Phase 10.9 忘记设置临时 `DATABASE_URL`，`rebuild_search_index` 直接在正式的 `backend/data/ai_daily.db` 上运行。本阶段的目标是让同样的操作**无法再静默发生**。
+
+### APP_ENV
+
+```text
+APP_ENV=development   # 默认
+APP_ENV=test          # pytest
+APP_ENV=production    # 正式运行
+```
+
+- 只有这三个值被识别，其他值（例如拼错的 `prodution`）会**回退到 development 并记录日志**，`release_check` 会报 FAIL，不会假装是正式环境
+- 判断集中在 `app/config/environment.py`，不在各处散落 `os.getenv("APP_ENV")`
+- `uv run pytest` 固定使用 `test`（在 `tests/conftest.py` 里于 import `app` 之前设置）
+
+### 数据库优先级
+
+```text
+CLI --database-url  >  DATABASE_URL  >  默认 backend/data/ai_daily.db
+```
+
+`--database-url` 既接受 URL，也接受裸路径：`--database-url C:\temp\scratch.db`。
+
+### 执行前显示
+
+所有写库维护命令在执行前都打印同样的三行（**不包含任何 Secret**，数据库一栏是解析后的路径而不是连接串）：
+
+```text
+Environment: development
+Database:    F:\study\ai-daily\backend\data\ai_daily.db
+Mode:        execute          # 或 dry-run
+```
+
+带密码的 PostgreSQL URL 只会显示为 `***@host/db`。
+
+### Production Guard
+
+以下**任一**情况成立时，任何写库维护命令默认拒绝执行：
+
+```text
+APP_ENV=production
+目标数据库就是默认的 backend/data/ai_daily.db
+```
+
+输出：
+
+```text
+Target database looks like the production/default AI Daily database.
+Use --allow-production if intentional.
+Detected because of: the default AI Daily database file.
+```
+
+必须显式加 `--allow-production` 才会继续。
+
+**关键点：**默认正式 DB 是一个**不依赖环境变量的 sentinel**。即使 `APP_ENV` 被错写成 `development`（正是 Phase 10.9 的情形），只要目标是 `backend/data/ai_daily.db`，命令仍然拒绝执行。
+
+`--dry-run` 例外：dry run 不修改任何东西，因此允许**描述**正式库上会做什么，并额外打印一行提示 real run 需要 `--allow-production`。
+
+受保护命令的退出码：
+
+```text
+0  成功
+2  被 production guard 拒绝
+3  校验或备份失败而中止（数据库未被修改）
+```
+
+### 自动备份
+
+对 production（或默认库）的**真实写操作**，执行顺序固定为：
+
+```text
+validate -> backup -> execute
+```
+
+产物：
+
+```text
+backups/pre_rebuild_search_index_YYYYMMDD_HHMMSS.db
+backups/pre_rebuild_digests_YYYYMMDD_HHMMSS.db
+backups/pre_backfill_article_content_YYYYMMDD_HHMMSS.db
+```
+
+- 使用 SQLite online backup API，因此即使 Backend 正在运行（数据库被占用）也能得到一致的副本（副本内容一致，但不保证与源文件逐字节相同）
+- **备份失败立即终止，绝不再碰数据库**
+
+PostgreSQL **暂不支持自动文件复制**。因为「无法回滚」不是一个可以写入的状态，对 production 的非 SQLite 目标命令会直接中止并说明原因，而不是在无法备份时继续写；只有 SQLite 会在写入前自动备份。
+
+### Dry Run
+
+`--dry-run` 至少覆盖三个命令，并且保证：
+
+- 不修改业务数据
+- 不创建永久 FTS 表
+- 不 `VACUUM`
+- 不修改 schema（**不调用 `init_db()`**）
+- 不因为描述计划而创建数据库文件
+
+只输出准备执行的操作。对不存在的数据库，dry run 报告 `Would index: 0 articles` 而不是创建一个空库。
+
+### 受保护的命令
+
+```bash
+cd backend
+uv run python -m app.jobs.rebuild_search_index            # 重建搜索索引
+uv run python -m app.jobs.rebuild_digests --dates 2026-09-13
+uv run python -m app.jobs.backfill_article_content --limit 20
+```
+
+三者都支持 `--database-url` / `--dry-run` / `--allow-production`，并共用同一个 guard 模块（`app/config/maintenance.py`），后续 rebuild / repair / migrate 类任务应复用同一入口。
+
+### 只读诊断
+
+```bash
+cd backend
+uv run python -m app.jobs.inspect_database
+```
+
+输出：
+
+```text
+Path / Size / SHA256 / Integrity / Foreign key check
+Business table counts
+FTS tables
+```
+
+以及：
+
+```bash
+uv run python -m app.jobs.release_check
+```
+
+检查 Database integrity、Foreign keys、Search backend、APP_ENV、APP_TIMEZONE、Scheduler、LLM 配置、必需目录、Production safety，输出 `PASS` / `WARN` / `FAIL`，有 FAIL 时退出码 `1`（便于脚本 gate）。它**不做** refresh、不抓 RSS、不调 LLM、不修改数据库。
+
+两个命令都是**完全只读**：不 `create_all`、不升级 schema、不 `ensure_index`、不 `VACUUM`、不写任何数据。运行它们**不会改变文件的 SHA256**，也不会创建 `news_search_fts*`；这一点有回归测试覆盖。
+
+`release_check` 的判定：
+
+```text
+PASS  一切正常
+WARN  不阻塞发布但需要知情（SCHEDULER_ENABLED=false、目录尚未创建、未设置 APP_ENV）
+FAIL  必须修复（未知 APP_ENV、不可用时区、LLM 已启用但缺少配置、数据库损坏、外键违规）
+```
+
+退出码 `0` 表示没有 FAIL（可能有 WARN），`1` 表示至少一个 FAIL。
+
+### FTS 生命周期
+
+只读路径（`inspect_database`、`release_check`、status 接口）不会创建 `news_search_fts*`。FTS 表只在**明确需要初始化搜索索引**的两处创建：
+
+- API 启动（`app/main.py` 的 lifespan -> `ensure_index`）
+- 显式的 `rebuild_search_index`
+
+其他路径不会创建它：`index_items`（正常 refresh 写索引时调用）在表不存在时是 no-op，只读命令与 status 接口都不碰 schema。搜索能力探测也改成了只读（用内存库探测 tokenizer、用 `sqlite_master` 读已有索引），不再在真实数据库上创建 probe 表。
+
+### 测试库强隔离
+
+`uv run pytest` 绝对不可能访问 `backend/data/ai_daily.db`：
+
+- `conftest.py` 在 import `app` 之前设置 `APP_ENV=test`，并指向 `tmp_path` 下的临时 SQLite
+- `configure_database()` 与 `get_engine()` 在 `APP_ENV=test` 时发现默认正式 DB 会**直接抛错**，因此即使某个测试手写 `DATABASE_URL` 也绕不过去
+- 有专门 regression test 覆盖
+
+### Release 前统一检查
+
+```powershell
+.\scripts\check_backend.ps1     # uv run pytest + release_check
+.\scripts\check_mobile.ps1      # tsc --noEmit + npm test + expo export
+```
+
+两者都在失败时以非 0 退出码结束，方便串进发布流程。
 
 ## 数据持久化
 
@@ -1354,6 +1540,14 @@ backups/ai_daily_YYYYMMDD_HHMMSS.db
 
 默认保留最近 14 份（`-Keep 0` 表示全部保留）。当数据库写入很少时直接复制文件即可；`backups/` 已加入 `.gitignore`。
 
+维护命令在执行**正式库的真实写操作**前会自己先备份一份，命名与上面的手动备份区分开：
+
+```text
+backups/pre_rebuild_search_index_YYYYMMDD_HHMMSS.db
+```
+
+这些自动备份不会被 `backup_db.ps1` 的清理逻辑删除（它只匹配 `ai_daily_*.db`）。
+
 ### 10. HTTP 与 HTTPS
 
 ```text
@@ -1393,8 +1587,33 @@ android.package = com.aidaily.app
 android.googleServicesFile 不存在
 ```
 
-也可以用本地 Android SDK 直接构建：`npx expo prebuild --platform android` 后执行
-`android/gradlew.bat :app:assembleRelease`，产物在 `android/app/build/outputs/apk/release/app-release.apk`。
+#### 用本机 Android SDK 直接构建
+
+本机**已经安装了 Android SDK** 与 JDK，只是对应的环境变量没有持久化：
+
+```text
+Android SDK installed at F:\software\Sdk
+JDK at F:\software\JDK\jdk-22
+ANDROID_HOME / ANDROID_SDK_ROOT are not persisted.
+```
+
+因此每次打开新的终端都要先设置（只影响当前终端，不修改系统环境变量）：
+
+```powershell
+$env:JAVA_HOME = "F:\software\JDK\jdk-22"
+$env:ANDROID_HOME = "F:\software\Sdk"
+$env:ANDROID_SDK_ROOT = "F:\software\Sdk"
+```
+
+然后构建：
+
+```powershell
+cd mobile
+npx expo prebuild --platform android
+.\android\gradlew.bat :app:assembleRelease
+```
+
+产物在 `mobile\android\app\build\outputs\apk\release\app-release.apk`。
 `mobile/android/` 与 `mobile/ios/` 都是生成目录，不提交 Git。
 
 ### 12. 真机验收清单

@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.9 - Global News Search
+Current Phase: Phase 10.10 - Environment Safety + Release Readiness
 
 Completed:
 - 项目初始化
@@ -34,6 +34,11 @@ Completed:
 - digest 客户端内存 cache（date -> DailyDigest，仅进程内），9-13 → 9-12 → 9-13 往返不再重复请求；后端 SQLite 仍是唯一 source of truth（Phase 10.8）
 - 全局新闻搜索：SQLite FTS5（优先 trigram）全文索引覆盖全部已收录新闻，标题 / 中文摘要 / 英文原文 / source / company / topic 都可搜（Phase 10.9）
 - 搜索后端启动时探测，FTS5 不可用自动退化为 SQL LIKE；搜索不可用绝不会导致 Backend 启动失败（Phase 10.9）
+- 环境隔离与维护命令安全：新增 APP_ENV（development / test / production），集中配置；pytest 固定为 test（Phase 10.10）
+- 维护命令共享 production guard：`--database-url` / `--dry-run` / `--allow-production`，默认拒绝写默认正式数据库（Phase 10.10）
+- 正式库写入前固定 validate -> backup -> execute，备份失败立即中止；备份为 `backups/pre_<command>_YYYYMMDD_HHMMSS.db`（Phase 10.10）
+- 新增只读诊断命令 inspect_database 与 release_check，完全不写数据库、不创建 schema、不创建 FTS（Phase 10.10）
+- 新增发布前脚本 scripts/check_backend.ps1 与 scripts/check_mobile.ps1（Phase 10.10）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -130,6 +135,13 @@ Push（产品决策，不是缺陷）:
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
 
+Not in scope（Phase 10.10）:
+- 未新增任何产品功能：Search / Ranking / 日报 / Mobile UI 行为均未改动
+- 未改 Mobile runtime（screens / components / navigation / services / types / android）：本阶段只跑测试、bundle export 与改 README 构建说明
+- 未引入 PostgreSQL migration、Alembic、云部署、HTTPS、RAG、embeddings、新新闻源
+- 未修改已经稳定的 API contract（/search 响应字段保持不变）
+- 未安装 Android SDK，未修改系统级环境变量
+
 Not in scope（Phase 10.7）:
 - 未改 ranking 算法、采集、event dedup、正文提取：本阶段只重排展示与标签
 - 未引入新新闻源、LLM 日报总结、搜索、登录、个性化推荐、embeddings / RAG、全文翻译、云部署、图片抓取、动画
@@ -184,8 +196,32 @@ Not in scope（Phase 10.9）:
 - 未新增新闻源，未调整 ranking 参数，未做云部署
 - 未改 issue window、Scheduler 08:00、Mobile API contract、收藏、Push、本地部署
 
+Phase 10.10 安全机制:
+- APP_ENV：development（默认）/ test / production，集中在 app/config/environment.py；未知值回退 development 并告警，release_check 报 FAIL
+- pytest 固定 APP_ENV=test，并且在 import app 之前设置，保证全进程一致
+- 测试库隔离双保险：conftest 指向 tmp_path；configure_database() / get_engine() 在 APP_ENV=test 时遇到默认正式 DB 直接抛错，测试手写 DATABASE_URL 也绕不过
+- 数据库优先级：CLI --database-url > DATABASE_URL > 默认 backend/data/ai_daily.db；--database-url 也接受裸路径
+- 维护命令统一 guard（app/config/maintenance.py）：rebuild_search_index / rebuild_digests / backfill_article_content，后续 rebuild / repair / migrate 类任务复用
+- Production Guard：APP_ENV=production **或** 目标就是默认 ai_daily.db 任一成立即拒绝；默认 DB 是独立于环境变量的 sentinel，APP_ENV 写错也无法绕过
+- 拒绝信息：Target database looks like the production/default AI Daily database. / Use --allow-production if intentional.
+- 退出码：0 成功 / 2 guard 拒绝 / 3 校验或备份失败中止
+- 执行顺序 validate -> backup -> execute；备份用 SQLite online backup API，Backend 运行时也能得到一致副本；备份失败立即终止，绝不写库
+- 自动备份命名 backups/pre_<command>_YYYYMMDD_HHMMSS.db；副本内容一致但不保证逐字节相同（online backup API）；PostgreSQL 明确 unsupported，且因为无法备份所以对 production 的非 SQLite 目标直接中止
+- dry run：--dry-run 不写业务数据、不建永久 FTS 表、不 VACUUM、不调 init_db()（不建表不加列）、不创建数据库文件、不抓网页；dry run 允许描述正式库并额外提示 real run 需要 --allow-production
+- inspect_database：只读报告 Path / Size / SHA256 / Integrity / Foreign key check / Business table counts / FTS tables，不 create_all、不升级 schema、不 ensure_index、不 VACUUM、不写数据，运行前后 SHA256 不变
+- release_check：只读检查 Database integrity / Foreign keys / Search backend / APP_ENV / APP_TIMEZONE / Scheduler / LLM 配置 / Required directories / Production safety，输出 PASS / WARN / FAIL，有 FAIL 退出码 1；不做 refresh、不抓 RSS、不调 LLM、不改数据库
+- FTS 生命周期：只读路径（inspect_database / release_check / status）不会创建 news_search_fts*；只在 API 启动 ensure_index 与显式 rebuild_search_index 两处创建；正常写入路径 index_items 在表不存在时是 no-op
+- 搜索能力探测改为只读：supported_backend 用内存库探测 tokenizer，existing_index_backend / usable_backend 只读 sqlite_master，探测不再在真实数据库上建 probe 表
+- scripts/check_backend.ps1（uv run pytest + release_check）与 scripts/check_mobile.ps1（tsc --noEmit + npm test + expo export），失败时非 0 退出
+- Android SDK 实际位于 F:\software\Sdk，JDK 位于 F:\software\JDK\jdk-22；ANDROID_HOME / ANDROID_SDK_ROOT / JAVA_HOME 未持久化，脚本只在自身进程内设置，不改系统环境
+
 Known Issues:
-- 真机（Android APK）验收未在本环境执行：当前机器没有 Android SDK（ANDROID_HOME / adb 均缺失），也没有连接的设备，只能完成 tsc + 单元测试 + 真实 API payload 验证
+- 维护命令的 production guard 保护的是「写库命令」；直接运行 uvicorn 或 refresh 仍会按 DATABASE_URL / 默认库正常写日报（这是产品行为，不是漏网）
+- --dry-run 对 backfill 只列出待处理文章，不预演抓取结果（会触发网络请求的预演没有意义）
+- 备份目录默认是仓库根的 backups/，可用 AI_DAILY_BACKUP_DIR 覆盖；自动备份不会被 backup_db.ps1 的保留策略清理，长期需要手动归档
+- APP_ENV 只影响 CORS、guard 与诊断输出，不改变数据库选择；数据库选择始终由 DATABASE_URL 决定
+
+- 真机（Android APK）验收未在本环境执行：没有连接的设备。本机**已安装** Android SDK（`F:\software\Sdk`）与 JDK（`F:\software\JDK\jdk-22`），但 ANDROID_HOME / ANDROID_SDK_ROOT / JAVA_HOME 未持久化，adb 不在 PATH 上；本阶段只完成 tsc + 单元测试 + expo export + 真实 API payload 验证（Phase 10.10 修正）
 - 搜索索引表由 create_all / ensure_table 管理，不在 SQLite 备份或 ALTER 补列的覆盖范围内：它随时可以用 rebuild_search_index 重建，所以不需要备份
 - 少于 3 字符的查询走 LIKE，因此在大库上比 trigram MATCH 慢；当前量级（个人单用户）完全够用，若文章数上万需要改成分词或专门的前缀索引
 - 搜索是词面子串匹配，不做同义词 / 词形还原：搜「发布」不会命中「推出」，搜 `release` 不会命中 `released` 之外的变形

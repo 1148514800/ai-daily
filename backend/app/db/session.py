@@ -47,9 +47,28 @@ def _configure_sqlite(engine: Engine) -> None:
         cursor.close()
 
 
+def _refuse_production_database(url: str) -> None:
+    """Under ``APP_ENV=test``, the production file can never be opened.
+
+    Enforced at the one place every connection goes through rather than in a
+    fixture, so a test that sets ``DATABASE_URL`` by hand is held to it too. The
+    suite cannot corrupt data it is not able to restore, and a mistake fails
+    loudly instead of quietly rewriting the real digest.
+    """
+    from app.config.database_safety import DEFAULT_DATABASE_FILE, is_default_database
+    from app.config.environment import is_test
+
+    if is_test() and is_default_database(url):
+        raise RuntimeError(
+            f"APP_ENV=test refused {DEFAULT_DATABASE_FILE}: tests must run against "
+            "a temporary database"
+        )
+
+
 def get_engine() -> Engine:
     global _engine, _database_url
     resolved = _resolve_url(database_url())
+    _refuse_production_database(resolved)
     if _engine is None or _database_url != resolved:
         if _engine is not None:
             _engine.dispose()
@@ -71,7 +90,15 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def configure_database(url: str) -> None:
-    """Point the process at another database. Used by tests."""
+    """Point the process at another database. Used by tests.
+
+    Refuses the production file while ``APP_ENV=test``: a test suite that reaches
+    the real database would corrupt data it cannot restore, so that is an error
+    rather than a warning. The check lives here, at the single entry point every
+    test uses, so it cannot be bypassed by forgetting a fixture.
+    """
+    _refuse_production_database(url)
+
     global _engine, _session_factory, _database_url
     resolved = _resolve_url(url)
     if _engine is not None:

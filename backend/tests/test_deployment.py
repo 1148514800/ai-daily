@@ -72,11 +72,16 @@ def test_system_status_reports_ok(client) -> None:
     assert payload["last_refresh_status"] in {"success", "failed", None}
 
 
-def test_system_status_never_leaks_configuration(client, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_system_status_never_leaks_configuration(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """A deployment health check must not echo secrets or connection strings."""
     monkeypatch.setenv("LLM_API_KEY", "sk-super-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp-secret-token")
-    monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/ai_daily.db")
+    # A URL that looks like production, so the check would catch it if the route
+    # echoed its connection string. It is not the real default file: tests are
+    # forbidden from pointing at that at all (see the isolation tests below).
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'secret.db').as_posix()}")
 
     response = client.get("/api/v1/system/status")
 

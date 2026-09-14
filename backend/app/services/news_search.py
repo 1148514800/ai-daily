@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime
 
 from sqlalchemy import text
@@ -47,7 +48,6 @@ from app.services.news_topics import label_article
 logger = logging.getLogger(__name__)
 
 SEARCH_TABLE = "news_search_fts"
-PROBE_TABLE = "news_search_fts_probe"
 
 BACKEND_TRIGRAM = "fts5-trigram"
 BACKEND_FTS5 = "fts5"
@@ -298,26 +298,69 @@ def search_backend(session: Session) -> str:
 
 
 def supported_backend(engine: Engine) -> str:
-    """Probe what this SQLite can do, best first.
+    """The best backend the SQLite in this process can actually build.
 
-    Runs on its own connection: a tokenizer the library does not know about
-    fails the statement, and that failure must not poison the caller's
-    transaction.
+    Purely a capability question, so it is answered against an in-memory
+    database: whether the linked SQLite knows FTS5 and a tokenizer is a property
+    of the library, not of any particular file. Asking this way means a
+    read-only diagnostic can call it too - nothing is created on disk, and a
+    tokenizer the library does not know about simply fails here.
     """
     if engine.dialect.name != "sqlite":
         return BACKEND_LIKE
-    for tokenizer, backend in (("trigram", BACKEND_TRIGRAM), ("unicode61", BACKEND_FTS5)):
-        try:
-            with engine.begin() as connection:
-                connection.exec_driver_sql(
-                    f"CREATE VIRTUAL TABLE IF NOT EXISTS \"{PROBE_TABLE}\" "
-                    f"USING fts5(x, tokenize='{tokenizer}')"
-                )
-                connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{PROBE_TABLE}"')
+    for backend, tokenizer in ((BACKEND_TRIGRAM, "trigram"), (BACKEND_FTS5, "unicode61")):
+        if _library_supports(tokenizer):
             return backend
-        except Exception:
-            logger.debug("fts5 %s tokenizer unavailable", tokenizer, exc_info=True)
     return BACKEND_LIKE
+
+
+@lru_cache(maxsize=None)
+def _library_supports(tokenizer: str) -> bool:
+    """Whether FTS5 can be built with ``tokenizer`` by the linked SQLite."""
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(
+            f'CREATE VIRTUAL TABLE probe USING fts5(x, tokenize=\'{tokenizer}\')'
+        )
+        return True
+    except sqlite3.Error:
+        logger.debug("fts5 %s tokenizer unavailable", tokenizer, exc_info=True)
+        return False
+    finally:
+        connection.close()
+
+
+def existing_index_backend(engine: Engine) -> str | None:
+    """The backend the index already in this database was created with.
+
+    A read: it looks the table up in ``sqlite_master`` and reads nothing else.
+    Returns None when the database has no FTS index at all.
+    """
+    if engine.dialect.name != "sqlite":
+        return None
+    with engine.connect() as connection:
+        ddl = connection.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (SEARCH_TABLE,),
+        ).scalar()
+    if not ddl:
+        return None
+    lowered = str(ddl).lower()
+    if "fts5" not in lowered:
+        return None
+    return BACKEND_TRIGRAM if "trigram" in lowered else BACKEND_FTS5
+
+
+def usable_backend(engine: Engine) -> str:
+    """The backend a caller may search with right now.
+
+    Prefers the index that exists, because that is what a query would hit; falls
+    back to what could be built. Used by diagnostics, which must not create
+    anything and must still report the truth about an unindexed database.
+    """
+    return existing_index_backend(engine) or supported_backend(engine)
 
 
 def backend_label(backend: str) -> str:
@@ -354,16 +397,11 @@ def ensure_table(engine: Engine) -> tuple[str, bool]:
         return BACKEND_LIKE, False
 
     if engine.dialect.name == "sqlite":
+        current = existing_index_backend(engine)
+        if current == desired:
+            return desired, False
         with engine.begin() as connection:
-            current = connection.exec_driver_sql(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-                (SEARCH_TABLE,),
-            ).scalar()
-            if current:
-                lowered = str(current).lower()
-                same = ("trigram" in lowered) == (desired == BACKEND_TRIGRAM)
-                if same and "fts5" in lowered:
-                    return desired, False
+            if current is not None:
                 connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{SEARCH_TABLE}"')
             connection.exec_driver_sql(_create_statement(desired))
         return desired, True
