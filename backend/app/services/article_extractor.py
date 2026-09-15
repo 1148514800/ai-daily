@@ -10,9 +10,16 @@ Body sources, highest priority first:
 
 1. the full body the feed itself carries (``content:encoded``, Atom ``content``,
    or a ``description`` long enough to be the whole article);
-2. the article's own web page;
+2. the article's own web page, read with a source-specific selector first and the
+   generic prose selectors second;
 3. the feed's own description / summary, all that is left when the page cannot be
-   read (paywall, 403, timeout, non-HTML).
+   read (paywall, 403, timeout, non-HTML) or when the page yielded something the
+   quality check refuses to call an article.
+
+Cleaning happens before that decision, and the decision is deterministic: see
+``app.services.article_quality`` for the measurements and thresholds that turn
+"this looks like a menu" into a verdict the caller can act on. A low-quality
+page never becomes a stored body; the feed summary is used instead.
 
 The text is never translated, rewritten, or summarised here. It is stored in the
 language it was published in; the Chinese ``title_cn`` / ``summary`` /
@@ -36,6 +43,13 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from app.collectors.http import DEFAULT_TIMEOUT, FetchError, FetchResult, fetch_document
 from app.collectors.raw import RawArticle
 from app.config.env import BACKEND_ROOT
+from app.services.article_quality import (
+    FALLBACK,
+    GOOD,
+    ArticleContentQuality,
+    assess_quality,
+    is_noise_paragraph,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +66,14 @@ LABEL_CACHE = "CACHE"
 LABEL_FALLBACK = "FALLBACK"
 
 MIN_BLOCK_CHARS = 2
+
+# How long a chrome line can be. Used with the wording patterns so that only a
+# short, label-like paragraph is ever treated as navigation or a banner.
+NOISE_MAX_CHARS = 120
+
+# A repeated block at least this long is a template echo and is dropped. Below
+# it, a repeated line is left alone: a one-word heading can legitimately repeat.
+MIN_DUPLICATE_CHARS = 30
 
 WHITESPACE_RE = re.compile(r"[\s\u00a0\u200b]+")
 PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
@@ -92,7 +114,11 @@ DROP_TAGS = {
 }
 
 # Containers that hold prose as one indivisible block.
-ATOMIC_TAGS = {"p", "pre", "td", "th", "dd", "dt", "figcaption", "address"}
+ATOMIC_TAGS = {"p", "pre", "td", "th", "dd", "dt", "figcaption", "address", "code"}
+
+# Containers whose text is a table of contents, a tag cloud or a comment thread.
+# Kept separate from DROP_TAGS because they are removed by the cleaner only, not
+# by the feed path: a feed body is already the article.
 
 # Containers that hold further blocks and must be descended into.
 BLOCK_TAGS = {
@@ -146,12 +172,20 @@ BOILERPLATE_PATTERNS = tuple(
         "newsletter",
         "subscribe",
         "signup",
+        "signin",
+        "sign-in",
+        "login",
+        "log-in",
         "social",
         "share",
         "sharing",
         "related",
         "recommend",
         "recommended",
+        "recommendation",
+        # A "you may also like" module under any of its usual names.
+        "relevant",
+        "advertisement",
         "readmore",
         "readnext",
         "popular",
@@ -173,16 +207,34 @@ BOILERPLATE_PATTERNS = tuple(
         "tooltip",
         "pagination",
         "pager",
-        "tag",
-        "tags",
-        "byline",
-    )
+    "tag",
+    "tags",
+    "byline",
+    "author-card",
+    "authorcard",
+    "author-bio",
+    "comment",
+    "comments",
+    "comment-list",
+    "disqus",
+    "backtotop",
+    "back-to-top",
+        "copyright",
+        "legal",
+        # Site-level disclosure blocks: they are about the publication, not the
+        # story, and they sit at the bottom of the page with the footer chrome.
+        "affiliate",
+        "disclaimer",
+        )
 )
 
 # Prose containers, most specific first. The first one that yields enough text
 # wins, so a page with <article> never falls back to a whole-page <main>.
 CONTENT_SELECTORS = (
     "[itemprop=articleBody]",
+    ".blog-post-body",
+    ".prose",
+    "#main-content .prose",
     "article",
     "main",
     "[role=main]",
@@ -197,6 +249,19 @@ CONTENT_SELECTORS = (
     "#content",
     ".content",
 )
+
+# Containers whose markup is known per source. Checked before the generic list
+# so a site that nests its article inside a lot of chrome is read from the right
+# element even when a bigger wrapper would otherwise win on raw length. Keys are
+# source ids; the value is tried in order and the first selector that matches
+# anything is used.
+SOURCE_CONTENT_SELECTORS: dict[str, tuple[str, ...]] = {
+    "cohere": (".blog-post-body", "article"),
+    "cursor": (".prose--blog", ".prose", "article"),
+    "anthropic": ("[class*=post]", "article", "main"),
+    "deepseek": ("article", "main"),
+    "kimi": ("article", "main"),
+}
 
 
 class ExtractionError(Exception):
@@ -252,10 +317,24 @@ class ArticleContent:
     method: str
     error: str | None = None
     from_cache: bool = False
+    # The candidate text ``text`` was cleaned from, before the noise rules ran.
+    # Kept for diagnosis only: the API never serves it.
+    raw: str = ""
+    # The deterministic verdict on ``text``. Stored with the row so the API can
+    # report it and the refresh log can show what was rejected. GOOD for a body
+    # that passed the check, LOW / FALLBACK for a feed summary or nothing.
+    quality: str = ""
+    # The measurements behind ``quality``, kept for the refresh log only.
+    quality_detail: str = ""
 
     @property
     def ok(self) -> bool:
         return bool(self.text)
+
+    @property
+    def usable(self) -> bool:
+        """Whether this text can be shown as the article body."""
+        return bool(self.text) and self.quality == GOOD
 
 
 def _clean_text(value: str) -> str:
@@ -323,6 +402,11 @@ def _has_block_child(tag: Tag) -> bool:
 def _append_block(blocks: list[str], text: str, *, settings: ExtractionSettings) -> None:
     cleaned = _clean_text(text)
     if len(cleaned) < MIN_BLOCK_CHARS or len(cleaned) > settings.max_block_chars:
+        return
+    if len(cleaned) <= NOISE_MAX_CHARS and is_noise_paragraph(cleaned):
+        # Chrome that kept a plain <div> wrapper, e.g. "Accept all cookies" or
+        # "Share on LinkedIn". Decided by wording *and* length, so a real
+        # sentence about cookies is never dropped.
         return
     if blocks and blocks[-1] == cleaned:
         return
@@ -397,18 +481,26 @@ def _drop_leading_title(blocks: list[str], title: str) -> list[str]:
     return blocks
 
 
-def _best_container(soup: BeautifulSoup) -> Tag:
+def _best_container(soup: BeautifulSoup, *, source_id: str = "") -> Tag:
     """The element most likely to hold the article body.
 
-    Every selector is considered and the largest surviving candidate wins,
-    with the selector order only breaking ties. Stopping at the first selector
-    that matches anything is not good enough: a page whose real body is in
-    ``<main>`` often also contains a tiny ``<article>`` card for a related post,
-    and picking that would return a few words instead of the article.
+    A source-specific selector wins outright when it matches: its markup is known
+    and was verified, so there is nothing to guess. Otherwise every generic
+    selector is considered and the largest surviving candidate wins, with the
+    selector order only breaking ties. Stopping at the first selector that
+    matches anything is not good enough: a page whose real body is in ``<main>``
+    often also contains a tiny ``<article>`` card for a related post, and picking
+    that would return a few words instead of the article.
 
     Boilerplate has already been removed by the caller, so the counts here are
     of the text that would actually be kept.
     """
+    if source_id:
+        for selector in SOURCE_CONTENT_SELECTORS.get(source_id, ()):
+            matches = [node for node in soup.select(selector) if not _is_boilerplate(node)]
+            if matches:
+                return max(matches, key=lambda node: len(node.get_text(" ", strip=True)))
+
     candidates: list[tuple[int, Tag]] = []
     for priority, selector in enumerate(CONTENT_SELECTORS):
         for node in soup.select(selector):
@@ -421,29 +513,58 @@ def _best_container(soup: BeautifulSoup) -> Tag:
     return max(candidates, key=lambda entry: (len(entry[1].get_text(" ", strip=True)), -entry[0]))[1]
 
 
-def clean_html(html: str, *, title: str = "", settings: ExtractionSettings = DEFAULT_SETTINGS) -> str:
+def clean_html(
+    html: str,
+    *,
+    title: str = "",
+    source_id: str = "",
+    settings: ExtractionSettings = DEFAULT_SETTINGS,
+) -> str:
     """Turn an article page (or feed body) into readable original text.
 
     Structure is kept where it is meaningful: headings keep their level, lists
     and quotes keep a marker, everything else becomes a paragraph. Navigation,
-    cookie banners, share buttons, related links, ads, and scripts are dropped
-    before any text is read, and the result is never translated.
+    cookie banners, share buttons, related links, ads, comments and scripts are
+    dropped before any text is read, and the result is never translated.
+    """
+    return clean_html_with_raw(
+        html, title=title, source_id=source_id, settings=settings
+    )[1]
+
+
+def clean_html_with_raw(
+    html: str,
+    *,
+    title: str = "",
+    source_id: str = "",
+    settings: ExtractionSettings = DEFAULT_SETTINGS,
+) -> tuple[str, str]:
+    """``(raw, cleaned)`` for one page or feed body.
+
+    ``raw`` is the chosen container's own text after the structural tags were
+    removed but *before* the paragraph-level cleaning: it is the candidate the
+    body was decided from, so a body that lost a real paragraph to a noise rule
+    can still be diagnosed. ``cleaned`` is what the reader sees and what the
+    quality check judges.
     """
     raw = str(html or "")
     if not raw.strip():
-        return ""
+        return "", ""
     if "<" not in raw:
-        return normalize_plain_text(raw)
+        text = normalize_plain_text(raw)
+        return text, text
 
     soup = BeautifulSoup(raw, "html.parser")
     for tag in soup.find_all(True):
         if _is_boilerplate(tag):
             tag.decompose()
 
-    container = _best_container(soup)
+    container = _best_container(soup, source_id=source_id)
+    raw_text = normalize_plain_text(container.get_text("\n", strip=True))
     blocks: list[str] = []
     _walk(container, blocks, settings)
     blocks = _drop_leading_title(blocks, title)
+    blocks = _drop_duplicate_blocks(blocks)
 
     if blocks:
         text = "\n\n".join(blocks)
@@ -454,7 +575,65 @@ def clean_html(html: str, *, title: str = "", settings: ExtractionSettings = DEF
         text = normalize_plain_text(container.get_text(" ", strip=True))
     if len(text) > settings.max_chars:
         text = text[: settings.max_chars].rstrip()
-    return text
+    if len(raw_text) > settings.max_chars:
+        raw_text = raw_text[: settings.max_chars].rstrip()
+    return raw_text, text
+
+
+def _drop_duplicate_blocks(blocks: list[str]) -> list[str]:
+    """Remove a block that already appeared earlier in the same body.
+
+    Templates repeat: a page often prints its own title, date and standfirst
+    twice, once in a hero and once in the article header. Identical blocks are
+    redundant wherever they appear, so the second copy is dropped. Short blocks
+    are left alone because a one-word heading can legitimately repeat.
+    """
+    seen: set[str] = set()
+    kept: list[str] = []
+    for block in blocks:
+        key = " ".join(block.split()).lower()
+        if len(key) >= MIN_DUPLICATE_CHARS:
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.append(block)
+    return kept
+
+
+def clean_article_html(
+    html: str,
+    *,
+    title: str = "",
+    source_id: str = "",
+    settings: ExtractionSettings = DEFAULT_SETTINGS,
+) -> tuple[str, ArticleContentQuality]:
+    """Clean a page and judge the result in one step.
+
+    The two belong together: the quality verdict only means anything about the
+    text the cleaner actually produced, and every caller that needs one needs
+    the other to decide whether to keep it.
+    """
+    text = clean_html(html, title=title, source_id=source_id, settings=settings)
+    return text, assess_quality(text)
+
+
+def _clean_with_quality(
+    html: str,
+    *,
+    title: str = "",
+    source_id: str = "",
+    settings: ExtractionSettings = DEFAULT_SETTINGS,
+) -> tuple[str, str, ArticleContentQuality]:
+    """``(raw, cleaned, verdict)`` for one candidate page or feed body.
+
+    The three are produced together because they only mean something together:
+    the verdict judges the cleaned text, and the raw text is what that cleaning
+    started from.
+    """
+    raw, text = clean_html_with_raw(
+        html, title=title, source_id=source_id, settings=settings
+    )
+    return raw, text, assess_quality(text)
 
 
 def detect_language(text: str) -> str:
@@ -526,6 +705,9 @@ class ArticleContentCache:
             language=str(payload.get("language") or ""),
             method=str(payload.get("method") or METHOD_WEB),
             from_cache=True,
+            raw=str(payload.get("raw") or ""),
+            quality=str(payload.get("quality") or ""),
+            quality_detail=str(payload.get("quality_detail") or ""),
         )
 
     def raw(self, canonical_url: str) -> dict | None:
@@ -549,6 +731,9 @@ class ArticleContentCache:
                 "text": content.text,
                 "language": content.language,
                 "method": content.method,
+                "raw": content.raw,
+                "quality": content.quality,
+                "quality_detail": content.quality_detail,
             },
         )
 
@@ -594,6 +779,7 @@ def extract_article(
     title: str = "",
     feed_body: str = "",
     feed_summary: str = "",
+    source_id: str = "",
     settings: ExtractionSettings = DEFAULT_SETTINGS,
     cache: ArticleContentCache | None = None,
     fetch=None,
@@ -603,6 +789,10 @@ def extract_article(
     A failure here only ever costs the body, never the article: a page that
     cannot be read ends up with its feed summary, and one bad page never stops
     the refresh.
+
+    A page that *is* read but whose text fails the quality check is treated the
+    same way: the body becomes the feed summary and the reason is reported, so a
+    menu or a cookie wall is never stored as an article.
     """
     cache_key = canonical_url or url
     hit = _cached(cache_key, cache)
@@ -610,12 +800,23 @@ def extract_article(
         return hit
 
     # 1. The feed's own full body, when it is long enough to be the article.
-    from_feed = clean_html(feed_body, title=title, settings=settings) if feed_body else ""
-    if len(from_feed) >= settings.rss_full_min_chars:
+    from_feed = ""
+    raw_feed = ""
+    feed_quality: ArticleContentQuality | None = None
+    if feed_body:
+        raw_feed, from_feed, feed_quality = _clean_with_quality(
+            feed_body, title=title, source_id=source_id, settings=settings
+        )
+    if len(from_feed) >= settings.rss_full_min_chars and (
+        feed_quality is None or feed_quality.verdict != FALLBACK
+    ):
         content = ArticleContent(
             text=from_feed,
             language=detect_language(from_feed),
             method=METHOD_RSS_FULL,
+            raw=raw_feed,
+            quality=feed_quality.verdict if feed_quality else GOOD,
+            quality_detail=feed_quality.describe() if feed_quality else "",
         )
         _store(cache, cache_key, content)
         return content
@@ -632,16 +833,32 @@ def extract_article(
             elif not body.strip():
                 page_error = "empty body"
             else:
-                page_text = clean_html(body, title=title, settings=settings)
-                if len(page_text) >= settings.web_min_chars:
+                raw_page, page_text, quality = _clean_with_quality(
+                    body, title=title, source_id=source_id, settings=settings
+                )
+                if len(page_text) >= settings.web_min_chars and quality.verdict == GOOD:
                     content = ArticleContent(
                         text=page_text,
                         language=detect_language(page_text),
                         method=METHOD_WEB,
+                        raw=raw_page,
+                        quality=quality.verdict,
+                        quality_detail=quality.describe(),
                     )
                     _store(cache, cache_key, content)
                     return content
-                page_error = f"page too short ({len(page_text)} chars)"
+                if len(page_text) < settings.web_min_chars:
+                    page_error = f"page too short ({len(page_text)} chars)"
+                else:
+                    # The page parsed but does not look like an article. The
+                    # reason is logged, because this is the case a cleaning bug
+                    # shows up as.
+                    page_error = f"low quality page ({quality.reason or quality.verdict})"
+                    logger.debug(
+                        "article page rejected by quality check url=%s %s",
+                        url,
+                        quality.describe(),
+                    )
         except FetchError as exc:
             page_error = str(exc)
         except Exception as exc:  # a broken page must not abort the refresh
@@ -650,14 +867,27 @@ def extract_article(
             logger.debug("article page unusable url=%s error=%s", url, page_error)
 
     # 3. Whatever the feed gave us: the longer of its body and its description.
-    from_summary = clean_html(feed_summary, settings=settings) if feed_summary else ""
-    fallback = max((from_feed, from_summary), key=len)
+    raw_summary, from_summary = (
+        clean_html_with_raw(feed_summary, source_id=source_id, settings=settings)
+        if feed_summary
+        else ("", "")
+    )
+    fallback, fallback_raw = max(
+        ((from_feed, raw_feed), (from_summary, raw_summary)), key=lambda pair: len(pair[0])
+    )
     if fallback:
+        # A summary is a summary: it is reported as LOW on purpose so the detail
+        # view can say the original body could not be fetched instead of
+        # presenting a teaser as the article.
+        quality = assess_quality(fallback, method=METHOD_RSS_SUMMARY)
         return ArticleContent(
             text=fallback,
             language=detect_language(fallback),
             method=METHOD_RSS_SUMMARY,
             error=page_error,
+            raw=fallback_raw,
+            quality=quality.verdict,
+            quality_detail=quality.describe(),
         )
     return ArticleContent(text="", language="", method=METHOD_NONE, error=page_error or "no content")
 
@@ -677,6 +907,7 @@ class ExtractionDecision:
     chars: int
     error: str | None = None
     from_cache: bool = False
+    quality: str = ""
 
     @property
     def label(self) -> str:
@@ -688,6 +919,8 @@ class ExtractionDecision:
 
     def describe(self) -> str:
         line = f"{self.source} | {self.label} | {self.chars} chars"
+        if self.quality:
+            line = f"{line} | quality={self.quality}"
         if self.error:
             line = f"{line} | {self.error}"
         return line
@@ -703,6 +936,9 @@ class ExtractionStats:
     fallback: int = 0
     failed: int = 0
     cache_hits: int = 0
+    # Pages that parsed but were refused by the quality check. Counted apart from
+    # ``fallback`` because they are the ones worth investigating.
+    rejected_low_quality: int = 0
     decisions: list[ExtractionDecision] = field(default_factory=list)
 
 
@@ -733,6 +969,7 @@ def extract_articles(
                 title=article.title,
                 feed_body=article.feed_body,
                 feed_summary=article.summary,
+                source_id=article.source_id,
                 settings=resolved,
                 cache=resolved_cache,
                 fetch=fetch,
@@ -756,6 +993,8 @@ def extract_articles(
             stats.fallback += 1
         if content.error:
             stats.failed += 1
+        if content.error and content.error.startswith("low quality page"):
+            stats.rejected_low_quality += 1
 
         stats.decisions.append(
             ExtractionDecision(
@@ -765,14 +1004,17 @@ def extract_articles(
                 chars=len(content.text),
                 error=content.error,
                 from_cache=content.from_cache,
+                quality=content.quality,
             )
         )
         enriched.append(
             replace(
                 article,
                 content=content.text,
+                content_raw=content.raw,
                 content_language=content.language,
                 content_method=content.method,
+                content_quality=content.quality,
                 content_fetched_at=datetime.now(timezone.utc) if content.text else None,
             )
         )
@@ -788,6 +1030,7 @@ def format_extraction_stats(stats: ExtractionStats, *, debug: bool = False) -> s
         f"Web extracted: {stats.web}",
         f"RSS fallback: {stats.fallback}",
         f"Failed: {stats.failed}",
+        f"Rejected (low quality): {stats.rejected_low_quality}",
         f"Cache hit: {stats.cache_hits}",
     ]
     if debug:
@@ -801,12 +1044,14 @@ def log_extraction(stats: ExtractionStats, *, debug: bool = False) -> None:
     if stats.candidates == 0:
         return
     logger.info(
-        "article extraction: candidates=%s rss_full=%s web=%s fallback=%s failed=%s cache_hits=%s",
+        "article extraction: candidates=%s rss_full=%s web=%s fallback=%s failed=%s "
+        "rejected_low_quality=%s cache_hits=%s",
         stats.candidates,
         stats.rss_full,
         stats.web,
         stats.fallback,
         stats.failed,
+        stats.rejected_low_quality,
         stats.cache_hits,
     )
     if not debug:

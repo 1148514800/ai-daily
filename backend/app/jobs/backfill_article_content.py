@@ -156,6 +156,7 @@ def backfill(
             repository.set_content(
                 row.id,
                 content=content.text,
+                raw=content.raw,
                 language=content.language,
                 method=content.method,
             )

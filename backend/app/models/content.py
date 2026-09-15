@@ -38,25 +38,46 @@ class NewsItem(BaseModel):
     company: str = ""
     # The original-language body. Excluded here on purpose: this model is also
     # the digest-list shape, and shipping every article body with the daily
-    # digest would inflate the response the phone needs for a quick read.
-    # ``NewsDetail`` re-declares the fields so the detail endpoint returns them.
+    # digest would inflate the response the phone needs for a quick read. The
+    # body leaves the backend only through ``NewsContent``.
     content_original: str = Field(default="", exclude=True)
+    # What the body was cleaned from, kept for diagnosis and never served.
+    content_raw: str = Field(default="", exclude=True)
     content_language: str = Field(default="", exclude=True)
     content_extraction_method: str = Field(default="", exclude=True)
+    content_quality: str = Field(default="", exclude=True)
     content_fetched_at: str | None = Field(default=None, exclude=True)
 
 
 class NewsDetail(NewsItem):
-    """One article with its original body, for the detail view.
+    """One article for the detail screen, deliberately *without* its body.
 
-    Every list field is inherited unchanged, so the detail response stays a
-    superset of the list item and older clients keep working.
+    Phase 10.11 made the body an on-demand fetch: the response says whether one
+    exists (``has_content``) and how it was obtained, and the text itself comes
+    from ``GET /news/{id}/content`` only when the reader taps 查看原文内容. The
+    fields below describe the stored body; the body is not part of this payload.
     """
 
-    content_original: str = ""
+    has_content: bool = False
     content_language: str = ""
     content_extraction_method: str = ""
-    content_fetched_at: str | None = None
+    content_quality: str = ""
+
+
+class NewsContent(BaseModel):
+    """The original-language body, returned only when it is asked for.
+
+    ``content_original`` is the cleaned article text in the language it was
+    published in: never translated, never summarised, never rewritten. When the
+    backend could not extract a real body, this is the feed's own summary and
+    ``content_quality`` says so instead of pretending.
+    """
+
+    news_id: str
+    content_original: str
+    content_language: str = ""
+    content_extraction_method: str = ""
+    content_quality: str = ""
 
 
 class GitHubProject(BaseModel):

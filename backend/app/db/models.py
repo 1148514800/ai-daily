@@ -31,9 +31,18 @@ class NewsArticleRow(Base):
     # translated: title_cn / summary / why_it_matters are separate Chinese fields
     # produced by the LLM, and neither side overwrites the other.
     content_original: Mapped[str] = mapped_column(Text, default="")
+    # The candidate text the body was cleaned *from*: everything the chosen
+    # container held before paragraph-level cleaning dropped the navigation,
+    # cookie and share lines. Kept so a cleaning bug is diagnosable after the
+    # fact -- the cleaned body alone cannot show what was removed -- and never
+    # returned by the API, which serves ``content_original`` only.
+    content_raw: Mapped[str] = mapped_column(Text, default="")
     content_language: Mapped[str] = mapped_column(String(16), default="")
     # How the body was obtained: rss_full / web / rss_summary / none.
     content_extraction_method: Mapped[str] = mapped_column(String(32), default="")
+    # The deterministic verdict the extractor reached on that body: good / low /
+    # fallback. Stored so the API can report it without re-running the check.
+    content_quality: Mapped[str] = mapped_column(String(16), default="")
     content_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

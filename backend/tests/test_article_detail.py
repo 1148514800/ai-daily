@@ -26,12 +26,12 @@ from app.services.llm.client import LLMCompletion, LLMError
 from app.services.llm.enrich import enrich_articles
 from app.services.llm.prompts import PROMPT_VERSION
 from app.services.llm.settings import LLMSettings
-from tests.conftest import EMPTY_HTML, EMPTY_RSS, build_rss
+from tests.conftest import EMPTY_HTML, EMPTY_RSS, build_rss, stored_body
 
 UTC = timezone.utc
 
 OPENAI_URL = "https://openai.com/index/gpt-6-astra"
-QBITAI_URL = "https://www.qbitai.com/2026/09/reasoning"
+COLDFUSION_URL = "https://deepmind.google/blog/long-context-notes"
 
 OPENAI_BODY = (
     "OpenAI introduced a new reasoning mode today that lets the model spend more "
@@ -46,15 +46,15 @@ OPENAI_BODY = (
     "A separate note said the older mode remains the default for now."
 )
 
-QBITAI_BODY = (
-    "OpenAI 今天发布了新的推理模式，模型在回答之前会花更多时间思考问题。"
-    "官方表示该模式已经可以在 API 中直接使用，并且在多步任务上的效果明显更好。"
-    "公司同时公布了与旧默认模式的评测对比结果，并表示首月价格保持不变。"
-    "团队工程师称这次变化改变的是模型分配算力的方式，并不是发布新模型，"
-    "整个过程中使用的仍然是同一套权重参数。"
-    "早期用户反馈称在长链路工具调用上效果更好，但简单问题的响应速度明显变慢，"
-    "因此该模式目前仍然需要手动开启。"
-    "另有说明表示，在收集到更多线上流量数据之前，旧模式将继续作为默认选项。"
+SECOND_BODY = (
+    "DeepMind published notes on long-context training today, describing how the "
+    "team keeps attention stable when the effective context grows past a million "
+    "tokens. The write-up walks through the curriculum it uses, the evaluation it "
+    "tracks, and the failure modes it saw when the sequence length was increased "
+    "too quickly. It also documents the inference cost of the longer window and "
+    "says the same approach is now used by the default model. Engineers said the "
+    "notes are meant to be reproduced, and published the configuration files so "
+    "that other labs can compare their own numbers against the reported ones."
 )
 
 
@@ -279,9 +279,9 @@ def test_refresh_stores_the_original_body_and_serves_it_from_the_detail_api(tmp_
     moment = shanghai("2026-09-13", 8)
     feeds = {
         "openai": build_rss([("New reasoning mode", OPENAI_URL, shanghai("2026-09-13", 6))]),
-        "qbitai": build_rss([("新的推理模式", QBITAI_URL, shanghai("2026-09-13", 5))]),
+        "deepmind": build_rss([("Long context notes", COLDFUSION_URL, shanghai("2026-09-13", 5))]),
     }
-    pages = {OPENAI_URL: page_html(OPENAI_BODY), QBITAI_URL: page_html(QBITAI_BODY)}
+    pages = {OPENAI_URL: page_html(OPENAI_BODY), COLDFUSION_URL: page_html(SECOND_BODY)}
     monkeypatch.setenv("ARTICLE_CACHE_DIR", str(tmp_path / "article-cache"))
 
     def fetch_page(url: str, *, timeout: float = 10.0):
@@ -294,17 +294,22 @@ def test_refresh_stores_the_original_body_and_serves_it_from_the_detail_api(tmp_
 
     session = new_session()
     try:
-        openai = NewsRepository(session).get_detail(stable_news_id(OPENAI_URL))
-        chinese = NewsRepository(session).get_detail(stable_news_id(QBITAI_URL))
+        repository = NewsRepository(session)
+        openai = repository.get_detail(stable_news_id(OPENAI_URL))
+        second = repository.get_detail(stable_news_id(COLDFUSION_URL))
+        openai_body = stored_body(session, stable_news_id(OPENAI_URL))
+        second_body = stored_body(session, stable_news_id(COLDFUSION_URL))
     finally:
         session.close()
 
-    assert openai is not None and chinese is not None
-    # Original language is preserved on both sides.
+    assert openai is not None and second is not None
+    # The body is stored, in the language it was published in, and is not part of
+    # the detail response any more: the reader asks for it separately.
+    assert openai.has_content is True
+    assert second.has_content is True
     assert openai.content_language == "en"
-    assert OPENAI_BODY in openai.content_original
-    assert chinese.content_language == "zh"
-    assert QBITAI_BODY in chinese.content_original
+    assert OPENAI_BODY in openai_body
+    assert SECOND_BODY in second_body
     assert events.last_extraction_stats.web == 2
 
 
@@ -329,14 +334,20 @@ def test_detail_endpoint_returns_body_and_the_list_does_not(tmp_path, monkeypatc
 
     assert detail.status_code == 200
     payload = detail.json()
-    assert OPENAI_BODY in payload["content_original"]
+    # The detail response describes the body without shipping it.
+    assert payload["has_content"] is True
+    assert "content_original" not in payload
     assert payload["content_language"] == "en"
+    assert payload["content_extraction_method"] == "web"
+    body = client.get(f"/api/v1/news/{news_id}/content").json()
+    assert OPENAI_BODY in body["content_original"]
     # Backward compatible: every list field is still present.
     for field in ("id", "title_cn", "title_original", "summary", "why_it_matters", "url", "source"):
         assert field in payload
     # The list response stays lean.
     listed = digest.json()["news"][0]
     assert "content_original" not in listed
+    assert "has_content" not in listed
 
 
 def test_detail_api_404_for_an_unknown_article(client) -> None:
@@ -378,7 +389,7 @@ def test_same_day_second_refresh_keeps_the_first_body(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("ARTICLE_CACHE_DIR", str(tmp_path / "article-cache"))
 
     def fetch_page(url: str, *, timeout: float = 10.0):
-        body = OPENAI_BODY if url.endswith("first") else QBITAI_BODY
+        body = OPENAI_BODY if url.endswith("first") else SECOND_BODY
         return FetchResult(url=url, status=200, content_type="text/html", text=page_html(body))
 
     store_ = DigestStore()
@@ -389,8 +400,13 @@ def test_same_day_second_refresh_keeps_the_first_body(tmp_path, monkeypatch) -> 
     assert {item.title_original for item in digest.news} == {"First", "Second"}
     ids = [item.id for item in digest.news]
     assert len(ids) == len(set(ids))
-    # Both bodies survive the merge.
-    assert all(item.content_original for item in digest.news)
+    # Both bodies survive the merge, and the list still does not carry them.
+    session = new_session()
+    try:
+        bodies = [stored_body(session, news_id) for news_id in ids]
+    finally:
+        session.close()
+    assert all(bodies)
     assert store_.last_extraction_stats.cache_hits == 0
 
 
@@ -556,12 +572,22 @@ def test_old_sqlite_database_gains_the_content_columns(tmp_path, monkeypatch) ->
             columns = {row[1] for row in migrated}
             # The pre-existing row is intact and readable through the new model.
             item = NewsRepository(session).get_detail("rss-old")
+            body = stored_body(session, "rss-old")
         finally:
             session.close()
-        assert {"content_original", "content_language", "content_extraction_method", "content_fetched_at"} <= columns
+        assert {
+            "content_original",
+            "content_language",
+            "content_extraction_method",
+            "content_quality",
+            "content_fetched_at",
+        } <= columns
         assert item is not None
         assert item.title_original == "Title"
-        assert item.content_original == ""
+        # A pre-Phase-10.5 row has no body at all, which is reported rather than
+        # assumed, and the body accessor returns the empty string for it.
+        assert item.has_content is False
+        assert body == ""
     finally:
         reset_database()
 
@@ -614,9 +640,10 @@ def test_a_new_body_is_not_overwritten_by_an_empty_refresh(tmp_path) -> None:
         )
         session.commit()
         stored = repository.get_detail("rss-keep")
+        stored_body_text = stored_body(session, "rss-keep")
     finally:
         session.close()
 
     assert stored is not None
-    assert stored.content_original == OPENAI_BODY
+    assert stored_body_text == OPENAI_BODY
     assert stored.content_language == "en"

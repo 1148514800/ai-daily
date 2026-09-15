@@ -38,8 +38,14 @@ class RawArticle:
     # Filled in by the article extraction step, in the article's own language.
     # Kept separate from ``summary``, which the LLM turns into Chinese prose.
     content: str = ""
+    # The candidate text ``content`` was cleaned from, before the noise rules
+    # dropped navigation / cookie / share lines. Diagnosis only: never served.
+    content_raw: str = ""
     content_language: str = ""
     content_method: str = ""
+    # The deterministic verdict on ``content``: good / low / fallback. Empty when
+    # no body was extracted at all.
+    content_quality: str = ""
     content_fetched_at: datetime | None = None
 
 

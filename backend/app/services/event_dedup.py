@@ -29,9 +29,10 @@ from app.models import NewsItem
 
 logger = logging.getLogger(__name__)
 
-# Official first-party news beats community first-party content, which beats
-# second-hand reporting. A lower rank wins, matching dedup.choose_winner.
-SOURCE_TYPE_RANK = {"official": 0, "blog": 1, "media": 2}
+# Official first-party news beats a lab's research post, which beats second-hand
+# reporting. A lower rank wins, matching dedup.choose_winner. ``research`` is the
+# class Phase 10.11 introduced in place of ``blog``.
+SOURCE_TYPE_RANK = {"official": 0, "research": 1, "media": 2}
 UNKNOWN_SOURCE_TYPE_RANK = 3
 
 # Function words carry no event signal; keeping them would make every pair of
@@ -393,8 +394,8 @@ def choose_main_news(
 ) -> NewsItem:
     """Pick the entry that represents a cluster.
 
-    Order of preference: source class (official > blog > media), the source's
-    configured priority, a higher ``importance_score``, a fuller summary, the
+    Order of preference: source class (official > research > media), the
+    source's configured priority, a higher ``importance_score``, a fuller summary, the
     earliest publication (the original announcement), and finally the id so the
     result never depends on collection order.
     """

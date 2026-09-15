@@ -11,6 +11,7 @@ from app.collectors.html import collect_html_source
 from app.collectors.raw import CollectResult, RawArticle
 from app.config.sources import NewsSource, enabled_sources
 from app.models import NewsItem
+from app.pipelines.ai_filter import is_ai_related
 from app.pipelines.normalize import news_item_from_raw
 from app.pipelines.urls import canonicalize_url
 
@@ -123,6 +124,14 @@ def parse_feed(xml: str, source: NewsSource) -> CollectResult:
         published_at = _published_at(entry)
 
         if not title or not url or published_at is None:
+            result.skipped += 1
+            continue
+
+        # A feed wider than its AI section (Ars Technica's AI category still
+        # carries gadget and business stories) is filtered before the entry can
+        # reach dedupe, ranking or the LLM. Counted as skipped, not as an error:
+        # dropping the non-AI part of a feed is the source working correctly.
+        if source.requires_ai_filter and not is_ai_related(title, summary):
             result.skipped += 1
             continue
 

@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:atom="http://www.w3.org/2005/Atom"
+	xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+	xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+	>
+
+<channel>
+	<title>Microsoft Research</title>
+	<atom:link href="https://www.microsoft.com/en-us/research/feed/" rel="self" type="application/rss+xml" />
+	<link>https://www.microsoft.com/en-us/research/</link>
+	<description></description>
+	<lastBuildDate>Mon, 31 Aug 2026 13:43:23 +0000</lastBuildDate>
+	<language>en-US</language>
+	<sy:updatePeriod>
+	hourly	</sy:updatePeriod>
+	<sy:updateFrequency>
+	1	</sy:updateFrequency>
+	<generator>https://wordpress.org/?v=7.0.4</generator>
+	<item>
+		<title>GigaPath-Flash and GigaTIME-Flash: Toward population-scale discovery with efficient pathology foundation models</title>
+		<link>https://www.microsoft.com/en-us/research/blog/gigapath-flash-and-gigatime-flash-toward-population-scale-discovery-with-efficient-pathology-foundation-models/</link>
+		
+		<dc:creator><![CDATA[Naoto Usuyama, Jeya Maria Jose Valanarasu, Tristan Naumann]]></dc:creator>
+		<pubDate>Mon, 31 Aug 2026 16:00:00 +0000</pubDate>
+				<category><![CDATA[Research Blog]]></category>
+		<guid isPermaLink="false">https://www.microsoft.com/en-us/research/blog/gigapath-flash-and-gigatime-flash-toward-population-scale-discovery-with-efficient-pathology-foundation-models/</guid>
+
+					<description><![CDATA[<p>What if pathology foundation models could do more with less? GigaPath-Flash and GigaTIME-Flash cut computational demands while maintaining strong performance, opening the door to larger studies and broader exploration.</p>
+<p>The post <a href="https://www.microsoft.com/en-us/research/blog/gigapath-flash-and-gigatime-flash-toward-population-scale-discovery-with-efficient-pathology-foundation-models/">GigaPath-Flash and GigaTIME-Flash: Toward population-scale discovery with efficient pathology foundation models</a> appeared first on <a href="https://www.microsoft.com/en-us/research">Microsoft Research</a>.</p>
+]]></description>
+										<content:encoded><![CDATA[
+<figure class="wp-block-image size-full"><img fetchpriority="high" decoding="async" width="1400" height="788" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW.jpg" alt="Overview of the GigaPath/GigaTIME model family. GigaPath-Flash provides efficient tile and slide encoders at 22M parameters. GigaTIME-Flash predicts spatial proteomics from H&E, replacing the CNN backbone with the distilled ViT-S encoder. " class="wp-image-1184911" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW.jpg 1400w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-300x169.jpg 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-1024x576.jpg 1024w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-768x432.jpg 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-1066x600.jpg 1066w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-655x368.jpg 655w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-240x135.jpg 240w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-640x360.jpg 640w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-960x540.jpg 960w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/GigaPathFlash-BlogHeroFeature-1400x788_NEW-1280x720.jpg 1280w" sizes="(max-width: 1400px) 100vw, 1400px" /></figure>
+
+
+
+<div style="padding-bottom:0;padding-top:0" class="wp-block-msr-immersive-section alignfull row">
+	
+	<div class="container">
+		<div class="wp-block-msr-immersive-section__inner wp-block-msr-immersive-section__inner--narrow">
+			<div class="wp-block-columns mb-10 pb-1 pr-1 is-layout-flex wp-container-core-columns-is-layout-8f761849 wp-block-columns-is-layout-flex" style="box-shadow:var(--wp--preset--shadow--outlined)">
+<div class="wp-block-column is-layout-flow wp-block-column-is-layout-flow">
+<h2 id="at-a-glance" class="wp-block-heading h3">At a glance</h2>
+
+
+
+<ul class="wp-block-list">
+<li>The Flash family extends GigaPath and GigaTIME with dramatically improved efficiency, making large-scale pathology research more accessible and practical.</li>
+
+
+
+<li>A distilled pathology foundation model backbone reduces computational requirements without sacrificing performance, enabling repeated analyses across larger patient cohorts.</li>
+
+
+
+<li>These open models support population-scale discovery, helping researchers investigate disease biology, biomarkers, and clinical outcomes across diverse cancer datasets.</li>
+</ul>
+
+
+
+<p class="wp-block-paragraph"><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/gigapath" target="_blank" rel="noopener noreferrer"><em>GigaPath</em><span class="sr-only"> (opens in new tab)</span></a><em> and </em><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/gigatime" target="_blank" rel="noopener noreferrer"><em>GigaTIME</em><span class="sr-only"> (opens in new tab)</span></a><em> demonstrated how foundation models can support whole-slide analysis and tumor microenvironment modeling from routinely collected pathology data. GigaPath-Flash and GigaTIME-Flash make these capabilities substantially more efficient, enabling researchers to analyze larger cohorts, run more experiments, and move toward population-scale discovery.</em> <em>GigaPath-Flash and GigaTIME-Flash are research models. They are not intended or validated for clinical use, including diagnosis, prognosis, treatment selection, or other patient-care decisions. Performance may vary across datasets, scanners, institutions, populations, and use cases.</em></p>
+</div>
+</div>		</div>
+	</div>
+
+	</div>
+
+
+
+<h2 id="the-scale-opportunity-in-computational-pathology" class="wp-block-heading">The scale opportunity in computational pathology</h2>
+
+
+
+<p class="wp-block-paragraph">Histopathology is among the richest and most widely available sources of information in cancer research. Every tissue biopsy produces a whole-slide image that captures cellular morphology at subcellular resolution — and hospitals generate millions of these slides each year. This data contains information relevant to diagnosis, prognosis, treatment selection, and the biology of the tumor microenvironment.</p>
+
+
+
+<p class="wp-block-paragraph">Foundation models have begun to unlock this information at scale. But whole-slide images are large — often exceeding a gigapixel — and applying a foundation model to even a single slide requires processing thousands of image tiles. When a research question involves tens of thousands of patients, the computational cost grows quickly. And population-scale discovery is not a single model run: it requires repeated cycles of feature extraction, statistical analysis, hypothesis testing, and validation across patient subgroups, biomarkers, and clinical endpoints. </p>
+
+
+
+<p class="wp-block-paragraph">Computational cost limits the number of patients, datasets, tasks, and hypotheses that researchers can study. To realize the full potential of pathology foundation models, we need models that can be applied repeatedly and affordably across large patient populations.</p>
+
+
+
+<h2 id="from-gigapath-and-gigatime-to-the-flash-family" class="wp-block-heading">From GigaPath and GigaTIME to the -Flash family</h2>
+
+
+
+<p class="wp-block-paragraph"><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/gigapath-paper" type="link" id="https://aka.ms/gigapath-paper" target="_blank" rel="noopener noreferrer">GigaPath (Nature, 2024)<span class="sr-only"> (opens in new tab)</span></a> is a whole-slide foundation model pretrained on large-scale real-world histopathology data from Providence. Unlike models that operate only at the tile level, GigaPath learns contextualized representations of entire slides, capturing both local cellular patterns and global tissue architecture.</p>
+
+
+
+<p class="wp-block-paragraph"><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/gigatime-paper" type="link" id="https://aka.ms/gigatime-paper" target="_blank" rel="noopener noreferrer">GigaTIME (Cell, 2026)<span class="sr-only"> (opens in new tab)</span></a> extends this line of work to tumor microenvironments. Trained on 40 million cells with paired H&E and multiplex immunofluorescence (mIF) data, GigaTIME translates routine H&E images into virtual spatial proteomics maps across 21 protein channels. Applied to over 14,000 cancer patients, it generated a virtual population that uncovered more than 1,200 statistically significant associations between immune cell states and clinical biomarkers.</p>
+
+
+
+<p class="wp-block-paragraph">GigaPath and GigaTIME addressed the scale of pathology data and biological discovery. And now, the Flash family of models addresses scale of experimentation.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img decoding="async" width="980" height="417" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1_overview_GPF_GTF.png" alt="Figure 1: Overview of the GigaPath/GigaTIME model family. GigaPath-Flash provides efficient tile and slide encoders at 22M parameters. GigaTIME-Flash predicts spatial proteomics from H&E, replacing the CNN backbone with the distilled ViT-S encoder. " class="wp-image-1184838" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1_overview_GPF_GTF.png 980w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1_overview_GPF_GTF-300x128.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1_overview_GPF_GTF-768x327.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1_overview_GPF_GTF-240x102.png 240w" sizes="(max-width: 980px) 100vw, 980px" /><figcaption class="wp-element-caption">Figure 1: Overview of the GigaPath/GigaTIME model family. GigaPath-Flash provides efficient tile and slide encoders at 22M parameters. GigaTIME-Flash predicts spatial proteomics from H&E, replacing the CNN backbone with the distilled ViT-S encoder.</figcaption></figure>
+
+
+
+<h2 id="introducing-gigapath-flash-and-gigatime-flash" class="wp-block-heading">Introducing GigaPath-Flash and GigaTIME-Flash</h2>
+
+
+
+<p class="wp-block-paragraph">The Flash family shares a core design goal: preserving useful pathology representations while substantially reducing the computational resources required to generate and use them. Both models are built on a common efficient backbone — a compact ViT-S tile encoder distilled from the original billion-parameter GigaPath encoder — and both are released under the Apache 2.0 license. </p>
+
+
+
+<h3 id="gigapath-flash" class="wp-block-heading">GigaPath-Flash</h3>
+
+
+
+<p class="wp-block-paragraph">GigaPath-Flash is an efficient foundation model for whole-slide representation learning. It combines a 22M-parameter ViT-S tile encoder with a 21M-parameter LongNet slide encoder. The tile encoder is distilled from the original GigaPath ViT-g teacher, transferring the representational capacity of a billion-parameter model into a backbone that is an order of magnitude smaller. The slide encoder contextualizes all tile embeddings via dilated attention, scaling linearly with the number of tiles.</p>
+
+
+
+<p class="wp-block-paragraph">On slide-level classification benchmarks (PANDA prostate grading and EBRAINS brain tumor subtyping), GigaPath-Flash achieves the lowest inference cost among whole-slide pretrained models while retaining competitive performance — scoring within 3% of the original GigaPath at roughly 50 times less compute.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img decoding="async" width="847" height="536" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig2_gigapath_slide_benchmark_efficiency_GPF_GTF.png" alt="Figure 2: Efficiency–performance trade-off on whole-slide benchmarks. GigaPath-Flash (red, top-left) achieves competitive performance at substantially lower computational cost than other whole-slide pretrained models." class="wp-image-1184839" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig2_gigapath_slide_benchmark_efficiency_GPF_GTF.png 847w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig2_gigapath_slide_benchmark_efficiency_GPF_GTF-300x190.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig2_gigapath_slide_benchmark_efficiency_GPF_GTF-768x486.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig2_gigapath_slide_benchmark_efficiency_GPF_GTF-240x152.png 240w" sizes="(max-width: 847px) 100vw, 847px" /><figcaption class="wp-element-caption">Figure 2: Efficiency–performance trade-off on whole-slide benchmarks. GigaPath-Flash (red, top-left) achieves competitive performance at substantially lower computational cost than other whole-slide pretrained models.</figcaption></figure>
+
+
+
+<h3 id="gigatime-flash" class="wp-block-heading">GigaTIME-Flash</h3>
+
+
+
+<p class="wp-block-paragraph">GigaTIME-Flash replaces the CNN backbone of the original GigaTIME with the GigaPath-Flash ViT-S encoder, paired with a lightweight convolutional decoder for H&E-to-mIF translation. The model is fine-tuned using LoRA adapters, keeping the pretrained encoder weights largely frozen.</p>
+
+
+
+<p class="wp-block-paragraph">On both in-distribution and out-of-distribution cohorts spanning brain, breast, colon, and lung cancers, GigaTIME-Flash matches or improves upon the original GigaTIME in spatial protein prediction quality. The gains are particularly notable on out-of-distribution data, suggesting that the foundation model backbone improves generalization to previously unseen tissue types.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img loading="lazy" decoding="async" width="1203" height="612" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF.png" alt="Figure 3: Mean windowed Pearson correlation for GigaTIME and GigaTIME-Flash on the GigaTIME test set and four out-of-distribution Prov-TMA cohorts. GigaTIME-Flash matches or improves upon the original across all cohorts." class="wp-image-1184840" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF.png 1203w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF-300x153.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF-1024x521.png 1024w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF-768x391.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_gigatime_mean_pearson_bars_GPF_GTF-240x122.png 240w" sizes="auto, (max-width: 1203px) 100vw, 1203px" /><figcaption class="wp-element-caption">Figure 3: Mean windowed Pearson correlation for GigaTIME and GigaTIME-Flash on the GigaTIME test set and four out-of-distribution Prov-TMA cohorts. GigaTIME-Flash matches or improves upon the original across all cohorts.</figcaption></figure>
+
+
+
+<h2 id="efficiency-without-giving-up-the-foundation" class="wp-block-heading">Efficiency without giving up the foundation</h2>
+
+
+
+<p class="wp-block-paragraph">The efficiency gains of the Flash models are substantial:</p>
+
+
+
+<figure class="wp-block-table"><table><thead><tr><th>Model</th><th>Type</th><th>Efficiency gain</th></tr></thead><tbody><tr><td>GigaPath-Flash</td><td>Whole-slide Foundation Model</td><td>~50× less compute, 97% of predictive performance compared to GigaPath</td></tr><tr><td>GigaTIME-Flash</td><td>Spatial Proteomics</td><td>~6× faster, ~8× less memory, better predictive performance compared to GigaTIME</td></tr></tbody></table></figure>
+
+
+
+<p class="wp-block-paragraph">For a single slide, these differences reduce runtime and hardware requirements. Across tens of thousands of slides, they can determine whether an experiment is practical at all. To illustrate, we estimate the wall-clock time for generating virtual mIF across cohorts of different sizes on a single A100 GPU, assuming approximately 10,000 tiles per slide:</p>
+
+
+
+<figure class="wp-block-table"><table class="has-fixed-layout"><thead><tr><th>Model</th><th>1,000 slides</th><th>100K slides</th><th>1M slides</th></tr></thead><tbody><tr><td><strong>GigaTIME-Flash</strong></td><td>~2 GPU-hours</td><td>~7 GPU-days</td><td>~70 GPU-days</td></tr><tr><td>GigaTIME</td><td>~7 GPU-hours</td><td>~30 GPU-days</td><td>~300 GPU-days</td></tr></tbody></table><figcaption class="wp-element-caption">Estimates assume ~10,000 tiles per slide, batch size 128, single NVIDIA A100 GPU. Actual runtime depends on slide size, tiling resolution, and hardware.</figcaption></figure>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img loading="lazy" decoding="async" width="842" height="375" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig4_gigatime_efficiency_plot_GPF_GTF.png" alt="Figure 4: GigaTIME efficiency scaling. Left: throughput (tiles/sec) vs. batch size. Right: peak GPU memory (GB) vs. batch size. GigaTIME-Flash scales to over 1,600 tiles/sec while using a fraction of the memory." class="wp-image-1184841" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig4_gigatime_efficiency_plot_GPF_GTF.png 842w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig4_gigatime_efficiency_plot_GPF_GTF-300x134.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig4_gigatime_efficiency_plot_GPF_GTF-768x342.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig4_gigatime_efficiency_plot_GPF_GTF-240x107.png 240w" sizes="auto, (max-width: 842px) 100vw, 842px" /><figcaption class="wp-element-caption">Figure 4: GigaTIME efficiency scaling. Left: throughput (tiles/sec) vs. batch size. Right: peak GPU memory (GB) vs. batch size. GigaTIME-Flash scales to over 1,600 tiles/sec while using a fraction of the memory.</figcaption></figure>
+
+
+
+<h2 id="an-open-model-release" class="wp-block-heading">An open model release</h2>
+
+
+
+<p class="wp-block-paragraph">Both GigaPath-Flash and GigaTIME-Flash are released as open-weight models under the Apache 2.0 license. Model weights and code are available on HuggingFace:</p>
+
+
+
+<ul class="wp-block-list">
+<li><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/GigaPath-Flash" type="link" id="aka.ms/GigaPath-Flash" target="_blank" rel="noopener noreferrer">GigaPath-Flash<span class="sr-only"> (opens in new tab)</span></a></li>
+
+
+
+<li><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/GigaTIME-Flash" type="link" id="aka.ms/GigaTIME-Flash" target="_blank" rel="noopener noreferrer">GigaTIME-Flash<span class="sr-only"> (opens in new tab)</span></a></li>
+
+
+
+<li><a href="https://www.microsoft.com/en-us/research/publication/gigapath-flash-and-gigatime-flash-efficient-pathology-foundation-models-for-whole-slide-and-tumor-microenvironment-analysis/" type="msr-research-item" id="1180651">GigaPath-Flash and GigaTIME-Flash: Efficient Pathology Foundation Models for Whole-Slide and Tumor Microenvironment Analysis</a></li>
+</ul>
+
+
+
+<p class="wp-block-paragraph">This is an early research release. Our current evaluations cover a limited set of benchmarks and cohorts, and broader validation across tasks, scanners, and patient populations is still needed. We expect the most valuable applications of these models to include scientific questions, cohorts, and use cases beyond those in our initial experiments. We welcome community evaluation, and we are equally interested in reports of where these models work well and where they fall short.</p>
+
+
+
+<p class="wp-block-paragraph">Downstream clinical applications will require additional multi-institutional and prospective validation.</p>
+
+
+
+	<div class="border-bottom border-top border-gray-300 mt-5 mb-5 msr-promo text-center text-md-left alignwide" data-bi-aN="promo" data-bi-id="1144028">
+		
+
+		<p class="msr-promo__label text-gray-800 text-center text-uppercase">
+		<span class="px-4 bg-white display-inline-block font-weight-semibold small">PODCAST SERIES</span>
+	</p>
+	
+	<div class="row pt-3 pb-4 align-items-center">
+						<div class="msr-promo__media col-12 col-md-5">
+				<a class="bg-gray-300 display-block" href="https://www.microsoft.com/en-us/research/story/the-ai-revolution-in-medicine-revisited/" aria-label="The AI Revolution in Medicine, Revisited" data-bi-cn="The AI Revolution in Medicine, Revisited" target="_blank">
+					<img decoding="async" class="w-100 display-block" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2025/06/Episode7-PeterBillSebastien-AIRevolution_Hero_Feature_River_No_Text_1400x788.jpg" alt="Illustrated headshot of Bill Gates, Peter Lee, and Sébastien Bubeck" />
+				</a>
+			</div>
+			
+			<div class="msr-promo__content p-3 px-5 col-12 col-md">
+
+									<h2 class="h4">The AI Revolution in Medicine, Revisited</h2>
+				
+								<p id="the-ai-revolution-in-medicine-revisited" class="large">Join Microsoft’s Peter Lee on a journey to discover how AI is impacting healthcare and what it means for the future of medicine.</p>
+				
+								<div class="wp-block-buttons justify-content-center justify-content-md-start">
+					<div class="wp-block-button">
+						<a href="https://www.microsoft.com/en-us/research/story/the-ai-revolution-in-medicine-revisited/" aria-describedby="the-ai-revolution-in-medicine-revisited" class="btn btn-brand glyph-append glyph-append-chevron-right" data-bi-cn="The AI Revolution in Medicine, Revisited" target="_blank">
+							Listen now						</a>
+					</div>
+				</div>
+							</div><!--/.msr-promo__content-->
+	</div><!--/.msr-promo__inner-wrap-->
+<span id="label-external-link" class="sr-only" aria-hidden="true">Opens in a new tab</span>	</div><!--/.msr-promo-->
+	
+
+
+<h2 id="efficiency-as-an-enabler-of-discovery" class="wp-block-heading">Efficiency as an enabler of discovery</h2>
+
+
+
+<p class="wp-block-paragraph">GigaPath and GigaTIME demonstrated what pathology foundation models can learn from whole slides and tumor tissue. GigaPath-Flash and GigaTIME-Flash are a step toward making those capabilities usable across larger populations, more experiments, and a broader research community.</p>
+
+
+
+<p class="wp-block-paragraph">By making pathology foundation models more efficient, we hope to expand the scale of the scientific questions researchers can ask.</p>
+
+
+
+<h2 id="acknowledgements" class="wp-block-heading">Acknowledgements</h2>
+
+
+
+<p class="wp-block-paragraph">GigaPath-Flash and GigaTIME-Flash are joint work across Microsoft Research, the University of Washington, and Providence. For technical details, see the <a href="https://www.microsoft.com/en-us/research/publication/gigapath-flash-and-gigatime-flash-efficient-pathology-foundation-models-for-whole-slide-and-tumor-microenvironment-analysis/" type="msr-research-item" id="1180651">paper</a>.</p>
+
+
+
+<p class="wp-block-paragraph"><em><strong>Paper co-authors</strong>: Naoto Usuyama, Jeya Maria Jose Valanarasu, Sicong Yao, Hanwen Xu, Jaspreet Bagga, Guanghui Qin, Robert E. Kramer, Cliff Wong, Soohee Lee, Hao Qiu, Theodore Zhengde Zhao, Racheli Ben Shimol, Angela Crabtree, Kevin Matlock, Eduardo Alejandro Lozano Garcia, Naiteek Sangani, Alberto Santamaria-Pang, Maximilian Rokuss, Yashna Hasija, Naisargi Manishkumar Patel, Jason Entenmann, Alexandra Q. Bartlett, Bill J. Wright, Bernard A. Fox, Brian Piening, Sheng Zhang, Sheng Wang, Tristan Naumann, Carlo Bifulco, Hoifung Poon</em></p>
+<span id="label-external-link" class="sr-only" aria-hidden="true">Opens in a new tab</span><p>The post <a href="https://www.microsoft.com/en-us/research/blog/gigapath-flash-and-gigatime-flash-toward-population-scale-discovery-with-efficient-pathology-foundation-models/">GigaPath-Flash and GigaTIME-Flash: Toward population-scale discovery with efficient pathology foundation models</a> appeared first on <a href="https://www.microsoft.com/en-us/research">Microsoft Research</a>.</p>
+]]></content:encoded>
+					
+		
+		
+			</item>
+		<item>
+		<title>Broadening access to Skala creates a faster path to predictive DFT </title>
+		<link>https://www.microsoft.com/en-us/research/blog/broadening-access-to-skala-creates-a-faster-path-to-predictive-dft/</link>
+		
+		<dc:creator><![CDATA[Sebastian Ehlert, Stefano Battaglia, Thijs Vogels, Jan Hermann, Jens Wehner, Giulia Luise, Klaas Giesbertz, Chin-Wei Huang, Aaron Kaplan, Kate Milton, Stephanie Marisa Lanius, Derk Kooi, P. Bern&aacute;t Szab&oacute;, Gregor Simm, Rianne van den Berg, Paola Gori Giorgi]]></dc:creator>
+		<pubDate>Thu, 20 Aug 2026 16:00:00 +0000</pubDate>
+				<category><![CDATA[Research Blog]]></category>
+		<guid isPermaLink="false">https://www.microsoft.com/en-us/research/?p=1184167</guid>
+
+					<description><![CDATA[<p>Skala 1.1, the updated deep-learning exchange-correlation functional from Microsoft Research, provides greater accuracy, expanded accessibility across the computational chemistry ecosystem, and a living benchmark to track computational performance. </p>
+<p>The post <a href="https://www.microsoft.com/en-us/research/blog/broadening-access-to-skala-creates-a-faster-path-to-predictive-dft/">Broadening access to Skala creates a faster path to predictive DFT </a> appeared first on <a href="https://www.microsoft.com/en-us/research">Microsoft Research</a>.</p>
+]]></description>
+										<content:encoded><![CDATA[
+<figure class="wp-block-image size-full"><img loading="lazy" decoding="async" width="1400" height="788" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1.jpg" alt="Schematic of the Skala architecture, showing how meta-GGA electronic features are transformed through point-wise processing and non-local atomic interactions to predict density functional theory energies." class="wp-image-1184452" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1.jpg 1400w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-300x169.jpg 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-1024x576.jpg 1024w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-768x432.jpg 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-1066x600.jpg 1066w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-655x368.jpg 655w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-240x135.jpg 240w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-640x360.jpg 640w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-960x540.jpg 960w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/Skala-BlogHeroFeature-1400x788-1-1-1280x720.jpg 1280w" sizes="auto, (max-width: 1400px) 100vw, 1400px" /></figure>
+
+
+
+<div style="padding-bottom:0;padding-top:0" class="wp-block-msr-immersive-section alignfull row">
+	
+	<div class="container">
+		<div class="wp-block-msr-immersive-section__inner wp-block-msr-immersive-section__inner--narrow">
+			<div class="wp-block-columns mb-10 pb-1 pr-1 is-layout-flex wp-container-core-columns-is-layout-8f761849 wp-block-columns-is-layout-flex" style="box-shadow:var(--wp--preset--shadow--outlined)">
+<div class="wp-block-column is-layout-flow wp-block-column-is-layout-flow">
+<h2 id="at-a-glance" class="wp-block-heading h3">At a glance</h2>
+
+
+
+<ul class="wp-block-list">
+<li>Skala 1.1 demonstrates the continuously improving nature of Microsoft Research&#8217;s deep-learning DFT approach: trained on 2.5× more data than its predecessor, it delivers substantially higher accuracy across key molecular simulation challenges, including thermochemistry, reaction kinetics, and molecular structure prediction.</li>
+
+
+
+<li>Skala is now available in <strong>CP2K</strong> and is being integrated into <strong>Psi4</strong>, <strong>FHI-aims</strong>, <strong>ORCA</strong> and <strong>VASP</strong>, bringing next-generation DFT accuracy closer to the communities that rely on these codes every day.</li>
+
+
+
+<li>Microsoft Research is also introducing a living benchmark that will track the computational performance of successive, increasingly optimized Skala releases to help the community measure and accelerate progress toward ever greater accuracy and efficiency.</li>
+
+
+
+<li>Together, these developments mark another milestone toward a future in which computational chemistry simulations are both predictive and integrated in all relevant scientific and industrial workflows.</li>
+</ul>
+</div>
+</div>		</div>
+	</div>
+
+	</div>
+
+
+
+<p class="wp-block-paragraph"><strong>Bringing density functional theory (DFT) to predictive accuracy is a journey, not a single breakthrough.</strong> Since <a href="https://www.microsoft.com/en-us/research/blog/breaking-bonds-breaking-ground-advancing-the-accuracy-of-computational-chemistry-with-deep-learning/" target="_blank" rel="noreferrer noopener">introducing Skala</a>, our deep-learning exchange-correlation functional, we have continued to advance along two complementary fronts: improving accuracy and expanding accessibility across the computational chemistry ecosystem.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img loading="lazy" decoding="async" width="1785" height="2560" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-scaled.png" alt="Fig. 1: Table of errors for Skala-1.1 and competing density functionals on the 55 subsets of GMTKN55. Skala-1.1 delivers the lowest error on 32 subsets, indicating broad and consistent accuracy across a wide range of chemical properties and reaction types." class="wp-image-1184173" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-scaled.png 1785w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-209x300.png 209w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-714x1024.png 714w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-768x1101.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-1071x1536.png 1071w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-1428x2048.png 1428w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig1-blog_SKALA1.1-126x180.png 126w" sizes="auto, (max-width: 1785px) 100vw, 1785px" /><figcaption class="wp-element-caption">Figure 1: Accuracy of Skala-1.1 for thermochemistry, kinetics, and non-covalent interactions. At the computational cost of a meta-GGA functional, Skala 1.1 outperforms the best, most expensive global hybrid functionals, ranking first (earning gold medals) in 32 of the 55 categories of the widely used GMTKN55 benchmark, which spans a broad range of chemical problems.</figcaption></figure>
+
+
+
+<p class="wp-block-paragraph">On the accuracy front, the <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://arxiv.org/abs/2506.14665" target="_blank" rel="noopener noreferrer">release of <strong>Skala-1.1</strong><span class="sr-only"> (opens in new tab)</span></a> provides the first demonstration of the continuous-improvement paradigm underlying Skala. Trained on 2.5x more data than the first public version of Skala, the updated&nbsp; model delivers substantially improved performance across key challenges in molecular simulation, including main-group thermochemistry, reaction kinetics, and molecular structure prediction.</p>
+
+
+
+<p class="wp-block-paragraph">But accuracy alone is not enough. DFT is the computational engine behind a vast range of scientific and industrial workflows, spanning chemistry, materials science, catalysis, energy technologies, and drug discovery. To have real-world impact, advanced functionals must be accessible where scientists already perform their calculations. That is why we are also expanding the Skala ecosystem through collaborations with leading electronic-structure software developers.</p>
+
+
+
+<p class="wp-block-paragraph">Today, we are announcing that Skala is available in <strong>CP2K</strong> and is being integrated into <strong>Psi4</strong>, <strong>FHI-aims</strong>, <strong>ORCA</strong> and <strong>VASP</strong>,&nbsp; bringing next-generation DFT accuracy closer to the communities that rely on these codes every day. Alongside these integration efforts, we are introducing a living benchmark that tracks the computational performance of successive, increasingly optimized Skala releases. By providing a transparent and continuously updated reference for implementations across software packages and hardware platforms, this resource will help the community measure and accelerate progress toward ever greater accuracy and efficiency.&nbsp;</p>
+
+
+
+<p class="wp-block-paragraph">Together, these developments mark another milestone toward a future in which computational chemistry simulations are both predictive and accessible across a broader range of relevant scientific and industrial workflows.</p>
+
+
+
+<p class="wp-block-paragraph">Want to learn more about Skala and why DFT plays such an important role in in-silico discovery? Read also <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/skaladft/blog" type="link" id="https://aka.ms/skaladft/blog" target="_blank" rel="noopener noreferrer">our first blog post<span class="sr-only"> (opens in new tab)</span></a>.</p>
+
+
+
+<h2 id="skala-as-a-continuously-improving-functional" class="wp-block-heading">Skala as a continuously improving functional</h2>
+
+
+
+<p class="wp-block-paragraph">Unlike the traditional &#8220;functional zoo&#8221;, where new functionals accumulate without replacing older ones, Skala follows a different philosophy: each release is designed to supersede the previous one. As new data, model architectures, and training strategies become available, the model improves while maintaining the same practical computational cost.</p>
+
+
+
+<p class="wp-block-paragraph"><strong>Skala-1.1</strong> is the latest demonstration of this approach. It achieves a weighted average error of <strong>2.8 kcal/mol on GMTKN55</strong>, a widely used benchmark suite comprising 55 categories of chemistry, including thermochemistry, reaction barriers, and noncovalent interactions. This level of accuracy surpasses today&#8217;s leading global (range-separated) hybrid functionals while retaining the efficiency of a semi-local functional. Beyond energies, Skala-1.1 also provides highly accurate electron densities, dipole moments, and molecular geometries.</p>
+
+
+
+<p class="wp-block-paragraph">These advances were enabled by major expansions of the <strong><a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://www.nature.com/articles/s41597-026-07200-8" type="link" id="https://www.nature.com/articles/s41597-026-07200-8" target="_blank" rel="noopener noreferrer">Microsoft Research Accurate Chemistry Collection<span class="sr-only"> (opens in new tab)</span></a> (MSR-ACC)</strong>, our large-scale collection of high-accuracy quantum-chemistry reference data generated with expensive wavefunction methods. For Skala-1.1, we added new categories, including electron affinities and noncovalent clusters, increasing both the size and, crucially, the diversity of the training data. This data-driven approach allows Skala to improve systematically with each generation, moving us closer to a truly scalable and predictive DFT framework.</p>
+
+
+
+<h2 id="available-where-scientists-work" class="wp-block-heading">Available where scientists work</h2>
+
+
+
+<p class="wp-block-paragraph">To fully realize the potential of Skala’s continuously evolving approach to DFT, we need dedicated infrastructure that allows new releases to be rapidly and seamlessly integrated into the major software packages used by scientists in industry and academia. In turn, this will establish the fast feedback loop essential for accelerating Skala’s ongoing development.</p>
+
+
+
+<p class="wp-block-paragraph">We first made Skala available through our <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://github.com/microsoft/skala" type="link" id="https://github.com/microsoft/skala" target="_blank" rel="noopener noreferrer">open-source community release<span class="sr-only"> (opens in new tab)</span></a>, built on (GPU4)<a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://pyscf.org/" type="link" id="https://pyscf.org/" target="_blank" rel="noopener noreferrer">PySCF<span class="sr-only"> (opens in new tab)</span></a> and <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/SkalaDFT/ASE" type="link" id="https://aka.ms/SkalaDFT/ASE" target="_blank" rel="noopener noreferrer">integrated with ASE<span class="sr-only"> (opens in new tab)</span></a>. This enables researchers to evaluate and apply Skala with minimal effort while benefiting from highly optimized CPU and GPU performance.</p>
+
+
+
+<p class="wp-block-paragraph">But no single software package can meet the needs of every application or research community. Computational chemistry and materials science rely on a rich ecosystem of electronic-structure codes, each shaped over decades to tackle specific scientific and industrial challenges. Bringing Skala to this broader ecosystem has therefore been a major focus of the past year. We are fortunate to build on the remarkable foundations created by the DFT community and grateful to the many researchers and developers who are helping to make Skala available within the software platforms that scientists use every day.</p>
+
+
+
+	<div class="border-bottom border-top border-gray-300 mt-5 mb-5 msr-promo text-center text-md-left alignwide" data-bi-aN="promo" data-bi-id="1144027">
+		
+
+		<p class="msr-promo__label text-gray-800 text-center text-uppercase">
+		<span class="px-4 bg-white display-inline-block font-weight-semibold small">PODCAST SERIES</span>
+	</p>
+	
+	<div class="row pt-3 pb-4 align-items-center">
+						<div class="msr-promo__media col-12 col-md-5">
+				<a class="bg-gray-300 display-block" href="https://www.microsoft.com/en-us/research/story/ai-testing-and-evaluation-learnings-from-science-and-industry/" aria-label="AI Testing and Evaluation: Learnings from Science and Industry" data-bi-cn="AI Testing and Evaluation: Learnings from Science and Industry" target="_blank">
+					<img decoding="async" class="w-100 display-block" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2025/06/EP2-AI-TE_Hero_Feature_River_No_Text_1400x788.jpg" alt="Illustrated headshots of Daniel Carpenter, Timo Minssen, Chad Atalla, and Kathleen Sullivan for the Microsoft Research Podcast" />
+				</a>
+			</div>
+			
+			<div class="msr-promo__content p-3 px-5 col-12 col-md">
+
+									<h2 class="h4">AI Testing and Evaluation: Learnings from Science and Industry</h2>
+				
+								<p id="ai-testing-and-evaluation-learnings-from-science-and-industry" class="large">Discover how Microsoft is learning from other domains to advance evaluation and testing as a pillar of AI governance.</p>
+				
+								<div class="wp-block-buttons justify-content-center justify-content-md-start">
+					<div class="wp-block-button">
+						<a href="https://www.microsoft.com/en-us/research/story/ai-testing-and-evaluation-learnings-from-science-and-industry/" aria-describedby="ai-testing-and-evaluation-learnings-from-science-and-industry" class="btn btn-brand glyph-append glyph-append-chevron-right" data-bi-cn="AI Testing and Evaluation: Learnings from Science and Industry" target="_blank">
+							Listen now						</a>
+					</div>
+				</div>
+							</div><!--/.msr-promo__content-->
+	</div><!--/.msr-promo__inner-wrap-->
+<span id="label-external-link" class="sr-only" aria-hidden="true">Opens in a new tab</span>	</div><!--/.msr-promo-->
+	
+
+
+<h2 id="from-community-release-to-native-integrations" class="wp-block-heading">From community release to native integrations</h2>
+
+
+
+<p class="wp-block-paragraph">In collaboration with the team of Prof. Thomas D. Kühne at the <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://casus.science" type="link" id="https://casus.science" target="_blank" rel="noopener noreferrer">Center for Advanced Systems Understanding (CASUS)<span class="sr-only"> (opens in new tab)</span></a>, Skala has been successfully integrated into the open-source <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://www.cp2k.org/" type="link" id="https://www.cp2k.org/" target="_blank" rel="noopener noreferrer">CP2K<span class="sr-only"> (opens in new tab)</span></a> package. With more than 25 years of development, CP2K is a powerhouse for DFT simulations, particularly for large-scale systems and long-timescale molecular dynamics, while also providing a rich portfolio of high-accuracy electronic-structure methods. Skala expands the frontiers of what is possible within CP2K, delivering a step change in DFT accuracy while preserving the computational efficiency needed for simulations at scale. We are excited to see how CP2K&#8217;s scale and versatility, combined with Skala&#8217;s continuously improving accuracy, will enable new scientific applications and discoveries in the years ahead.</p>
+
+
+
+<p class="wp-block-paragraph">There is more to come. Together with its vibrant developer’s community , we are actively integrating Skala into the open-source <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://psicode.org/" type="link" id="https://psicode.org/" target="_blank" rel="noopener noreferrer">Psi4<span class="sr-only"> (opens in new tab)</span></a> package, an essential platform for molecular electronic-structure research. Combined with the PySCF-based Skala Community Edition, this will make Skala available in three widely used open-source quantum chemistry packages.</p>
+
+
+
+<p class="wp-block-paragraph">Beyond open-source software, we are working closely with leading developers behind <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://www.fhi-aims.org/" target="_blank" rel="noopener noreferrer">FHI-aims<span class="sr-only"> (opens in new tab)</span></a>, <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://www.faccts.de/orca/" target="_blank" rel="noopener noreferrer">ORCA<span class="sr-only"> (opens in new tab)</span></a>, and <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://vasp.at/" target="_blank" rel="noopener noreferrer">VASP<span class="sr-only"> (opens in new tab)</span></a>, with the goal of making Skala broadly accessible across the major software platforms used in computational chemistry and materials science.</p>
+
+
+
+<h2 id="validating-accuracy-across-implementations-cp2k-as-case-study" class="wp-block-heading">Validating accuracy across implementations: CP2K as case study</h2>
+
+
+
+<p class="wp-block-paragraph">Thorough testing is essential for any new implementation. We want to ensure that Skala delivers consistent accuracy across different codes and computational settings. Together with the CP2K team, we developed a comprehensive suite of integration tests to verify that Skala produces numerically correct and reliable results. We are particularly grateful to the CASUS team, whose deep expertise in the numerical verification of computational methods was instrumental in designing and validating this testing framework.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full is-resized"><img loading="lazy" decoding="async" width="2007" height="2007" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA.png" alt="Fig. 2: Plot comparing signed errors for Skala-1.1 using the CP2K and PySCF implementations on a representative subset of GMTKN55. The two implementations show nearly identical results, agreeing within 0.04 kcal/mol and confirming that the CP2K integration reproduces the accuracy of the community release." class="wp-image-1184807" style="width:556px;height:auto" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA.png 2007w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-300x300.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-1024x1024.png 1024w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-150x150.png 150w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-768x768.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-1536x1536.png 1536w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-180x180.png 180w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/cp2k_vs_pyscf_error-3_SKALA-360x360.png 360w" sizes="auto, (max-width: 2007px) 100vw, 2007px" /><figcaption class="wp-element-caption">Figure 2: Signed errors relative to high-accuracy reference values for a representative subset of GMTKN55, comparing the CP2K and PySCF implementations of Skala-1.1 using as closely matched numerical settings as possible. The two implementations agree to within 0.1 kcal/mol MAD across the entire subset.</figcaption></figure>
+
+
+
+<p class="wp-block-paragraph">A detailed discussion of the implementation, validation strategy, and testing infrastructure for Skala in CP2K can be found in our joint paper with the CASUS team: “<a href="https://www.microsoft.com/en-us/research/publication/molecular-implementation-of-the-machine-learned-skalaexchange-correlation-functional-in-cp2k-through-gauxc/">Molecular Implementation of the Machine-Learned Skala Exchange-Correlation Functional in CP2K through GauXC</a>.&#8221;</p>
+
+
+
+<h2 id="a-living-performance-report-for-skala" class="wp-block-heading">A living performance report for Skala</h2>
+
+
+
+<p class="wp-block-paragraph">Accuracy and broad availability only translate into scientific impact if Skala is also fast. Today, Skala can deliver performance comparable to semi-local meta-GGAs on both CPU’s (with an overhead that disappears for molecules with more than 20-30 atoms) and GPUs, and we are committed to preserving that efficiency as it is integrated across the electronic-structure software ecosystem.</p>
+
+
+
+<p class="wp-block-paragraph">But performance is not a fixed property. New Skala releases, improvements in libraries such as GauXC, and hardware-specific optimizations continuously improve efficiency and reveal new opportunities for further gains. Capturing this progress requires more than a single benchmark snapshot.</p>
+
+
+
+<p class="wp-block-paragraph">To provide a transparent and up-to-date view of Skala&#8217;s performance, we are publishing a <a class="msr-external-link glyph-append glyph-append-open-in-new-tab glyph-append-xsmall" href="https://aka.ms/SkalaDFT/timing" type="link" id="https://aka.ms/SkalaDFT/timing" target="_blank" rel="noopener noreferrer">benchmarking harness together with a living performance report<span class="sr-only"> (opens in new tab)</span></a> that will be updated as new optimizations become available. This report tracks performance across a range of tasks and hardware platforms, while the harness enables package developers to benchmark, validate, and improve their own Skala implementations.</p>
+
+
+
+<figure class="wp-block-image aligncenter size-full"><img loading="lazy" decoding="async" width="2518" height="1108" src="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1.png" alt="Fig. 3 (figure attached): Benchmark of the computational cost of Skala-1.1 relative to r2SCAN, B3LYP, and M06-2X on GPUs and CPUs. Skala-1.1 achieves performance comparable to r2SCAN on GPUs and approaches semilocal-functional cost on CPUs for larger systems, while remaining significantly less expensive than hybrid functionals." class="wp-image-1184172" srcset="https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1.png 2518w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-300x132.png 300w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-1024x451.png 1024w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-768x338.png 768w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-1536x676.png 1536w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-2048x901.png 2048w, https://www.microsoft.com/en-us/research/wp-content/uploads/2026/08/fig3_SKALA1.1-240x106.png 240w" sizes="auto, (max-width: 2518px) 100vw, 2518px" /><figcaption class="wp-element-caption">Figure 3: Computational cost of Skala on GPU and CPU, compared with a popular metaGGA functional (r2SCAN) and two hybrid functionals (B3LYP and M06-2X). On GPU, Skala 1.1 has the same cost as r2SCAN, and the hybrid functionals become more expensive for systems with more than ~1000 orbitals. On CPU, Skala has an overhead with respect to the other functionals for smaller systems, that disappears for systems with more than ~300 orbitals. </figcaption></figure>
+
+
+
+<h2 id="acknowledgments" class="wp-block-heading">Acknowledgments</h2>
+
+
+
+<p class="wp-block-paragraph">Skala is the product of a truly collaborative effort across AI for Science, and we thank our engineering, project management, and business operations teams for making this work possible. We also thank MSR Accelerator for their partnership in advancing data generation efforts and accelerating software integrations that help bring Skala to the broader scientific community.</p>
+<span id="label-external-link" class="sr-only" aria-hidden="true">Opens in a new tab</span><p>The post <a href="https://www.microsoft.com/en-us/research/blog/broadening-access-to-skala-creates-a-faster-path-to-predictive-dft/">Broadening access to Skala creates a faster path to predictive DFT </a> appeared first on <a href="https://www.microsoft.com/en-us/research">Microsoft Research</a>.</p>
+]]></content:encoded>
+					
+		
+		
+			</item>
+  </channel>
+</rss>

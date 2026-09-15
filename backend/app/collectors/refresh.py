@@ -10,6 +10,7 @@ from app.services.event_dedup import format_event_dedup
 from app.services.article_extractor import format_extraction_stats
 from app.services.news_ranker import format_ranking, ranking_debug_enabled
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
+from app.services.source_health import build_report, format_source_health
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
 EXTRACTION_DEBUG_ENV = "AI_DAILY_DEBUG_EXTRACTION"
@@ -98,22 +99,15 @@ def main() -> None:
     reports = combined.reports
     github_stats: GitHubRefreshStats = combined.github_stats
     article_stats = store.last_llm_stats
-    failed: list[str] = []
+    health = build_report(reports)
 
-    print("Sources")
+    print(format_source_health(health))
     for report in reports:
-        if report.success:
-            print(f"{report.source_name}: {len(report.valid)}")
-        else:
-            print(f"{report.source_name}: failed")
         if report.error:
-            print(f"Error: {report.error}")
-            failed.append(report.source_name)
+            print(f"Error ({report.source_name}): {report.error}")
 
     print(f"Candidates: {article_stats.candidates}")
     print(f"After dedup: {article_stats.candidates}")
-    if failed:
-        print(f"Failed: {', '.join(failed)}")
     print()
 
     print(format_extraction_stats(store.last_extraction_stats, debug=_extraction_debug_enabled()))

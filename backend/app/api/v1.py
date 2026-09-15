@@ -32,7 +32,7 @@ from app.db.repositories import (
 from app.db.session import new_session
 from app.jobs.daily_refresh import is_refresh_running
 from app.jobs.scheduler import next_run_at, scheduler_state
-from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
+from app.models import DailyDigest, GitHubProject, NewsContent, NewsDetail, NewsItem
 from app.services.digest_store import store
 from app.services.news_search import DEFAULT_LIMIT, MAX_LIMIT
 from app.services.push import ExpoPushClient, PushMessage
@@ -73,17 +73,34 @@ def get_daily_by_date(date: str) -> DailyDigest:
 
 @router.get("/news/{news_id}", response_model=NewsDetail)
 def get_news(news_id: str) -> NewsDetail:
-    """One article with its original-language body.
+    """One article's metadata, deliberately without its original body.
 
-    Every field the digest list returns is repeated here unchanged, so the
-    detail response is a strict superset and older clients keep working. The
-    body is the cleaned original text; Chinese ``title_cn`` / ``summary`` /
-    ``why_it_matters`` are separate fields and never replace it.
+    Every field the digest list returns is repeated here unchanged, plus the
+    description of the stored body (``has_content``, how it was extracted, and
+    what the quality check said). The text itself is a separate request, so
+    opening a detail screen costs one small response instead of a full article.
+    Chinese ``title_cn`` / ``summary`` / ``why_it_matters`` are separate fields
+    and never replace the original.
     """
     item = store.get_news_detail(news_id)
     if item is None:
         raise HTTPException(status_code=404, detail="News item not found")
     return item
+
+
+@router.get("/news/{news_id}/content", response_model=NewsContent)
+def get_news_content(news_id: str) -> NewsContent:
+    """The cleaned original-language body of one article, on demand.
+
+    A 404 means the article does not exist. An article that exists but has no
+    stored body returns an empty ``content_original`` with the method that
+    produced nothing, which lets the client show "no original text available"
+    rather than an error. The text is never translated or summarised here.
+    """
+    content = store.get_news_content(news_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="News item not found")
+    return content
 
 
 @router.get("/github", response_model=list[GitHubProject])

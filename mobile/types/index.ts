@@ -33,17 +33,39 @@ export type NewsItem = {
 };
 
 /**
- * One article with its original body. The detail endpoint returns every
- * NewsItem field plus the original-language text, which the list response
- * omits to keep the digest payload small.
+ * One article's metadata for the detail screen, deliberately *without* its body.
+ *
+ * The body used to travel with this payload, which made opening one story cost
+ * as much as a page of them. Phase 10.11 made it an on-demand fetch: this type
+ * says whether a body exists and how it was obtained, and `fetchNewsContent`
+ * returns the text only when the reader asks for it.
  */
 export type NewsDetail = NewsItem & {
+  /** True when the backend has stored a body for this article. */
+  has_content: boolean;
+  /** BCP-47-ish code for the body, e.g. "en" / "zh". Empty if unknown. */
+  content_language: string;
+  /** How the body was obtained: rss_full / web / rss_summary / none. */
+  content_extraction_method: string;
+  /** The deterministic verdict on the body: good / low / fallback. */
+  content_quality: string;
+};
+
+/**
+ * One article's original-language body, fetched on demand.
+ *
+ * Returned by `GET /api/v1/news/{id}/content`. An article that exists without a
+ * stored body returns an empty `content_original` rather than a 404, so "no
+ * text" and "no such article" stay distinguishable.
+ */
+export type NewsContent = {
+  news_id: string;
   /** The article as published, in its original language. Never translated. */
   content_original: string;
   /** BCP-47-ish code for the body, e.g. "en" / "zh". Empty if unknown. */
   content_language: string;
   content_extraction_method: string;
-  content_fetched_at: string | null;
+  content_quality: string;
 };
 
 export type GitHubProject = {
@@ -92,7 +114,7 @@ export type DigestSummary = {
 
 /**
  * One search hit. Deliberately has no article body: the list stays light and
- * the full original text is fetched from `GET /api/v1/news/{id}` on tap.
+ * the full original text is fetched from `GET /api/v1/news/{id}/content` on tap.
  */
 export type SearchResultItem = {
   news_id: string;

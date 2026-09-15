@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { DigestView } from '../components/DigestView';
 import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
@@ -11,13 +11,17 @@ import { colors, spacing } from '../theme';
 
 type TodayScreenProps = {
   onOpenNews: (id: string) => void;
-  /** Switch to the history tab, the entry point for reading past digests. */
-  onOpenHistory: () => void;
-  /** Open the search screen for the whole archive. */
-  onOpenSearch: () => void;
 };
 
-export function TodayScreen({ onOpenNews, onOpenHistory, onOpenSearch }: TodayScreenProps) {
+/**
+ * Today's digest: one ranked list, then GitHub Trending.
+ *
+ * Phase 10.11 removed the 历史日报 / 搜索历史新闻 shortcuts from this screen. Both
+ * capabilities still exist on the backend and still have their own places in the
+ * app (the 历史 tab and its search entry), but the daily read is no longer
+ * interrupted by two links out.
+ */
+export function TodayScreen({ onOpenNews }: TodayScreenProps) {
   const { status, data, error, reload } = useAsyncResource(fetchTodayDaily);
   // /daily already resolves "today's digest, or the latest one when today has
   // not been generated yet". The view only decides how to label the result, so
@@ -50,19 +54,11 @@ export function TodayScreen({ onOpenNews, onOpenHistory, onOpenSearch }: TodaySc
                happen. */
             showFinishedHint={view.isToday}
             headerNote={
-              <>
-                {view.fellBack ? (
-                  <Text style={styles.fallback}>
-                    今天还没有生成日报，以下是 {formatShortDate(data.date)} 的日报。
-                  </Text>
-                ) : null}
-                <Pressable onPress={onOpenHistory} hitSlop={8} style={styles.historyLink}>
-                  <Text style={styles.historyLinkText}>历史日报 →</Text>
-                </Pressable>
-                <Pressable onPress={onOpenSearch} hitSlop={8} style={styles.historyLink}>
-                  <Text style={styles.historyLinkText}>搜索历史新闻 →</Text>
-                </Pressable>
-              </>
+              view.fellBack ? (
+                <Text style={styles.fallback}>
+                  今天还没有生成日报，以下是 {formatShortDate(data.date)} 的日报。
+                </Text>
+              ) : null
             }
           />
         ) : null}
@@ -77,15 +73,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: colors.textSecondary,
     marginTop: spacing.sm,
-  },
-  historyLink: {
-    marginTop: spacing.sm,
-    alignSelf: 'flex-start',
-  },
-  historyLinkText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-    color: colors.accent,
   },
 });

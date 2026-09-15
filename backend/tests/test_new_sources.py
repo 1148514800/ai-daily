@@ -16,6 +16,8 @@ from app.collectors.html import (
     PageStructureError,
     anthropic_entries,
     collect_html_source,
+    cohere_entries,
+    cursor_entries,
     deepseek_entries,
     deepseek_links,
     kimi_entries,
@@ -23,7 +25,12 @@ from app.collectors.html import (
 )
 from app.collectors.raw import RawArticle
 from app.collectors.rss import collect_all_sources, parse_feed
-from app.config.sources import NEWS_SOURCE_KINDS, enabled_sources, source_by_id
+from app.config.sources import (
+    NEWS_SOURCE_KINDS,
+    NEWS_SOURCE_TYPES,
+    enabled_sources,
+    source_by_id,
+)
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.urls import canonicalize_url
 from app.services.digest_store import DigestStore
@@ -34,6 +41,8 @@ ANTHROPIC_XML = read_fixture("anthropic_news.html")
 DEEPSEEK_INDEX = read_fixture("deepseek_index.html")
 DEEPSEEK_NEWS = read_fixture("deepseek_news.html")
 KIMI_BLOG = read_fixture("kimi_blog.html")
+COHERE_BLOG = read_fixture("cohere_blog.html")
+CURSOR_BLOG = read_fixture("cursor_blog.html")
 
 
 # --- source configuration ---
@@ -43,7 +52,7 @@ def test_every_source_declares_a_supported_kind() -> None:
     for source in enabled_sources():
         assert source.kind in NEWS_SOURCE_KINDS, source.id
         assert source.url.startswith("https://"), source.id
-        assert source.source_type in {"official", "media", "blog"}, source.id
+        assert source.source_type in NEWS_SOURCE_TYPES, source.id
 
 
 def test_new_sources_are_enabled_with_expected_types() -> None:
@@ -55,19 +64,60 @@ def test_new_sources_are_enabled_with_expected_types() -> None:
         "qwen": "official",
         "kimi": "official",
         "techcrunch-ai": "media",
-        "qbitai": "media",
+        "mistral": "official",
+        "cohere": "official",
+        "cursor": "official",
+        "microsoft-research": "research",
+        "ars-technica": "media",
     }
     found = {source.id: source.source_type for source in enabled_sources()}
     for source_id, source_type in expected.items():
         assert found[source_id] == source_type
 
 
-def test_official_sources_outrank_media() -> None:
-    """Official first-party sources carry a lower priority number than media."""
+def test_official_outranks_research_outranks_media() -> None:
+    """Priority numbers are banded by source class, so dedupe can trust them."""
     priorities = {source.id: source.priority for source in enabled_sources()}
     official = [priorities[s.id] for s in enabled_sources() if s.source_type == "official"]
+    research = [priorities[s.id] for s in enabled_sources() if s.source_type == "research"]
     media = [priorities[s.id] for s in enabled_sources() if s.source_type == "media"]
-    assert max(official) < min(media)
+    assert max(official) < min(research)
+    assert max(research) < min(media)
+
+
+def test_source_types_are_exactly_the_three_documented_classes() -> None:
+    """Phase 10.11 replaced the old ``blog`` class with ``research``.
+
+    The list matters because the client renders whatever the backend sends: a
+    fourth value would reach the UI as an untranslated string, and ``blog``
+    would quietly put Hugging Face back in its own bucket.
+    """
+    assert set(NEWS_SOURCE_TYPES) == {"official", "research", "media"}
+    assert "blog" not in NEWS_SOURCE_TYPES
+    assert all(source.source_type != "blog" for source in enabled_sources())
+
+
+def test_hugging_face_is_a_research_source() -> None:
+    """Hugging Face publishes research, not reporting, so it is not media."""
+    assert source_by_id("huggingface").source_type == "research"
+
+
+def test_every_enabled_source_has_a_unique_id_and_a_kind() -> None:
+    sources = enabled_sources()
+    assert len({source.id for source in sources}) == len(sources)
+    assert all(source.kind in NEWS_SOURCE_KINDS for source in sources)
+
+
+def test_github_trending_is_not_a_news_source() -> None:
+    """GitHub stays a developer signal with its own collector and its own page.
+
+    Folding it into ``SOURCES`` would give it a source_type, a priority and a
+    place in dedupe and ranking, none of which apply to a repository listing.
+    """
+    from app.config.sources import all_sources
+
+    assert all(not source.id.startswith("github") for source in all_sources())
+    assert all("github.com/trending" not in source.url for source in all_sources())
 
 
 # --- RSS sources ---
@@ -95,11 +145,75 @@ def test_techcrunch_feed_parses(techcrunch_rss_xml: str) -> None:
     assert result.valid[0].source_type == "media"
 
 
-def test_qbitai_feed_parses_chinese_titles(qbitai_rss_xml: str) -> None:
-    result = parse_feed(qbitai_rss_xml, source_by_id("qbitai"))
+def test_quantum_bit_ai_is_no_longer_collected() -> None:
+    """Phase 10.11 dropped 量子位: its feed must not be reachable any more."""
+    source_ids = {source.id for source in enabled_sources()}
+    assert "qbitai" not in source_ids
+    assert all("qbitai" not in source.url for source in enabled_sources())
+
+
+def test_mistral_feed_parses(mistral_rss_xml: str) -> None:
+    """Mistral publishes a real RSS feed, so it needs no HTML collector."""
+    source = source_by_id("mistral")
+    assert source.kind == "rss"
+    result = parse_feed(mistral_rss_xml, source)
+    assert result.success is True
     assert len(result.valid) == 2
-    assert result.valid[0].title.startswith("2000+真实场景")
-    assert result.valid[0].source == "量子位"
+    first = result.valid[0]
+    assert first.title.startswith("Cloudera and Mistral Partner")
+    assert first.url == "https://mistral.ai/news/mistral-x-cloudera/"
+    assert first.published_at == datetime(2026, 9, 10, 10, 42, 55, tzinfo=UTC)
+    assert first.summary.startswith("Cloudera and Mistral join forces")
+    assert first.source == "Mistral AI"
+    assert first.source_type == "official"
+
+
+def test_microsoft_research_feed_parses(microsoft_research_rss_xml: str) -> None:
+    source = source_by_id("microsoft-research")
+    assert source.kind == "rss"
+    result = parse_feed(microsoft_research_rss_xml, source)
+    assert result.success is True
+    assert len(result.valid) == 2
+    first = result.valid[0]
+    assert first.title.startswith("GigaPath-Flash and GigaTIME-Flash")
+    assert first.url.startswith("https://www.microsoft.com/en-us/research/blog/")
+    assert first.published_at == datetime(2026, 8, 31, 16, 0, tzinfo=UTC)
+    assert first.summary
+    # The feed declares its own offset (+0000); the stored instant stays UTC.
+    assert first.published_at.tzinfo is not None
+    assert first.source == "Microsoft Research"
+    assert first.source_type == "research"
+
+
+def test_ars_technica_feed_drops_the_non_ai_half(ars_technica_rss_xml: str) -> None:
+    """The AI category still carries stories that are not about AI.
+
+    The robot-dog review is a gadgets piece that happens to mention robotics;
+    the Claude story is real AI news. The filter has to tell them apart before
+    either reaches dedupe, ranking or the LLM.
+    """
+    source = source_by_id("ars-technica")
+    assert source.requires_ai_filter is True
+    result = parse_feed(ars_technica_rss_xml, source)
+
+    assert result.success is True
+    titles = [article.title for article in result.valid]
+    assert "Claude users found ways around safeguards for bioweapons research" in titles
+    assert "I spent $4,000 on a robot dog from China" not in titles
+    # The dropped entry is counted, not silently lost.
+    assert result.fetched == 2
+    assert result.skipped == 1
+
+
+def test_ars_technica_keeps_metadata_of_the_kept_story(ars_technica_rss_xml: str) -> None:
+    source = source_by_id("ars-technica")
+    result = parse_feed(ars_technica_rss_xml, source)
+    article = result.valid[0]
+    assert article.url.startswith("https://arstechnica.com/ai/2026/09/")
+    assert article.published_at == datetime(2026, 9, 11, 13, 2, 35, tzinfo=UTC)
+    assert article.summary.startswith("Some dangerous biology")
+    assert article.source == "Ars Technica"
+    assert article.source_type == "media"
 
 
 # --- HTML sources ---
@@ -140,6 +254,74 @@ def test_kimi_payload_without_article_list_is_a_structure_error() -> None:
 
 def test_deepseek_index_lists_the_newest_release_page() -> None:
     assert deepseek_links(DEEPSEEK_INDEX) == ["/news/news260910"]
+
+
+def test_cohere_page_parses_its_dated_cards() -> None:
+    """Every card prints its publish date in an eyebrow line above the link."""
+    entries = cohere_entries(COHERE_BLOG)
+    by_url = {url: (title, published) for url, title, published in entries}
+
+    assert len(entries) == 3
+    assert by_url["https://cohere.com/blog/north-small-translate"] == (
+        "Introducing North Small Translate: A leading sovereign open-weight machine translation model",
+        datetime(2026, 9, 10, tzinfo=UTC),
+    )
+    assert by_url["https://cohere.com/blog/who-gets-to-define-the-rules-for-ai"][0] == (
+        "Who Gets to Define the Rules for AI?"
+    )
+    # The card without an eyebrow date is skipped rather than guessed at, and a
+    # /blog/tag/ chip is not an article.
+    assert "https://cohere.com/blog/undated-teaser" not in by_url
+    assert all("/tag/" not in url for url in by_url)
+
+
+def test_cohere_page_without_blog_links_is_a_structure_error() -> None:
+    with pytest.raises(PageStructureError):
+        cohere_entries("<html><body><p>Redesigned</p></body></html>")
+
+
+def test_cursor_page_parses_its_dated_rows() -> None:
+    entries = cursor_entries(CURSOR_BLOG)
+    by_url = {url: (title, published) for url, title, published in entries}
+
+    assert len(entries) == 2
+    # The headline is the row's own <p>, not the author name or the reading time.
+    assert by_url["https://cursor.com/blog/projects"] == (
+        "Introducing Projects",
+        datetime(2026, 9, 10, 12, 0, tzinfo=UTC),
+    )
+    assert by_url["https://cursor.com/blog/self-hosted-machines"][0] == (
+        "Run cloud agents on machines you manage"
+    )
+    # A row whose date column is missing, and a featured card without a <time>,
+    # are both skipped.
+    assert "https://cursor.com/blog/undated-row" not in by_url
+    assert "https://cursor.com/blog/undated-feature" not in by_url
+
+
+def test_cursor_page_without_blog_links_is_a_structure_error() -> None:
+    with pytest.raises(PageStructureError):
+        cursor_entries("<html><body><p>Redesigned</p></body></html>")
+
+
+def test_cohere_and_cursor_listing_collectors_agree_with_configuration(
+    cohere_blog_html: str, cursor_blog_html: str
+) -> None:
+    """End to end through the HTML collector, not just the entry parser."""
+    cases = [
+        ("cohere", cohere_blog_html, "Cohere", "official"),
+        ("cursor", cursor_blog_html, "Cursor", "official"),
+    ]
+    for source_id, html, name, source_type in cases:
+        result = collect_html_source(
+            source_by_id(source_id),
+            fetch_text=lambda url, timeout=10.0, _html=html: _html,
+        )
+        assert result.success is True, result.error
+        assert result.valid, source_id
+        assert all(article.source == name for article in result.valid)
+        assert all(article.source_type == source_type for article in result.valid)
+        assert all(article.published_at is not None for article in result.valid)
 
 
 def test_deepseek_listing_parses_title_and_date() -> None:

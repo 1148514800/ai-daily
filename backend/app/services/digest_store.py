@@ -12,7 +12,7 @@ from app.db.repositories import (
     NewsRepository,
 )
 from app.db.session import new_session
-from app.models import DailyDigest, GitHubProject, NewsDetail, NewsItem
+from app.models import DailyDigest, GitHubProject, NewsContent, NewsDetail, NewsItem
 from app.pipelines.dedup import dedupe_articles
 from app.pipelines.normalize import news_item_from_raw
 from app.services.digest_window import (
@@ -443,6 +443,14 @@ class DigestStore:
         session = new_session()
         try:
             return NewsRepository(session).get_detail(news_id)
+        finally:
+            session.close()
+
+    def get_news_content(self, news_id: str) -> NewsContent | None:
+        """The original body of one article, read only when it is asked for."""
+        session = new_session()
+        try:
+            return NewsRepository(session).get_content(news_id)
         finally:
             session.close()
 

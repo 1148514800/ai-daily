@@ -1,9 +1,12 @@
 """Collectors for official sources that publish no usable feed.
 
-Three sources list their news only in HTML. Each page is stable and public but
+Some sources list their news only in HTML. Each page is stable and public but
 different in shape, so every source gets a small extractor here instead of one
 generic guesser that would break silently. All of them return the same
 ``CollectResult`` as the RSS collector, so the pipeline stays source-agnostic.
+
+Every extractor is independent: a Mistral or Cursor markup change is reported as
+that one source failing and cannot affect OpenAI, Anthropic or any other.
 
 An extractor returns ``(url, title, published_at)`` triples, or raises
 ``PageStructureError`` when the markup it depends on is gone. The two failure
@@ -32,6 +35,20 @@ from app.pipelines.urls import canonicalize_url
 ANTHROPIC_BASE = "https://www.anthropic.com"
 DEEPSEEK_BASE = "https://api-docs.deepseek.com"
 KIMI_BASE = "https://www.kimi.com"
+COHERE_BASE = "https://cohere.com"
+CURSOR_BASE = "https://cursor.com"
+
+# Cohere prints the publish date in an "eyebrow" line above each card: a
+# <p> whose whole text is the date. Anchoring on the element rather than on a
+# class means a restyle does not move the date, and walking up from it to the
+# nearest container that holds a /blog/ link keeps the card boundary honest.
+COHERE_DATE_CLASS = "font-eyebrow"
+
+# Cursor's listing has two shapes: dated directory rows and undated featured
+# cards. The row shape is preferred because it carries the date; a featured card
+# without a date is skipped rather than guessed at.
+CURSOR_ROW_SELECTOR = "a.blog-directory__row"
+CURSOR_CARD_SELECTOR = "a.card--media, a.card--feature"
 
 ENGLISH_DATE_FORMATS = ("%b %d, %Y", "%B %d, %Y", "%b. %d, %Y")
 ENGLISH_DATE_RE = re.compile(
@@ -40,6 +57,11 @@ ENGLISH_DATE_RE = re.compile(
 DEEPSEEK_DATE_RE = re.compile(r"(\d{4}/\d{2}/\d{2})\s*$")
 KIMI_ARTICLE_LIST = '\\"articleList\\"'
 KIMI_ITEMS = '\\"items\\":'
+
+COHERE_LINK_PREFIX = "/blog/"
+CURSOR_LINK_PREFIX = "/blog/"
+# Paths under /blog/ that are index pages rather than articles.
+LISTING_PATH_SEGMENTS = ("/topic/", "/tag/", "/category/", "/author/", "/page/")
 
 
 class PageStructureError(Exception):
@@ -190,6 +212,197 @@ def deepseek_entries(page_html: str) -> list[tuple[str, str, datetime]]:
     return entries
 
 
+def _is_article_path(href: str, prefix: str) -> bool:
+    """Whether a listing link points at an article rather than an index page."""
+    if not href.startswith(prefix):
+        return False
+    return not any(segment in href for segment in LISTING_PATH_SEGMENTS)
+
+
+def _card_from_date_element(
+    date_el: Tag, *, prefix: str, base: str
+) -> tuple[str, str, datetime] | None:
+    """Walk up from a date element to the smallest container holding the card.
+
+    The card boundary is defined by structure ("this element contains both the
+    date and exactly one article link") rather than by a hashed CSS class, so a
+    site restyle that keeps its layout keeps working.
+    """
+    published = parse_english_date(date_el.get_text(" ", strip=True))
+    if published is None:
+        return None
+    node: Tag | None = date_el
+    for _ in range(8):
+        node = node.parent if node is not None else None
+        if node is None or node.name in {"body", "html"}:
+            return None
+        links = [
+            anchor
+            for anchor in node.find_all("a", href=True)
+            if _is_article_path(str(anchor["href"]), prefix)
+        ]
+        if not links:
+            continue
+        # A card is often two anchors: one around the cover image, one around the
+        # headline. The one carrying the text is the headline, so the longest
+        # anchor wins rather than whichever happens to come first in the markup.
+        anchor = max(links, key=lambda item: len(item.get_text(" ", strip=True)))
+        href = str(anchor["href"])
+        title = _card_title(anchor, node)
+        if not title:
+            return None
+        return (urljoin(base, href), title, published)
+    return None
+
+
+def _card_title(anchor: Tag, container: Tag) -> str:
+    """The card's headline, taken from the link's own text block.
+
+    The headline is the first heading or paragraph inside the anchor, because the
+    cards print title first and standfirst second. Anything from a date onwards is
+    cut, since some cards put the date and reading time inside the same link. The
+    image's ``alt`` is the last resort: on Cohere it describes the picture rather
+    than the article, so it must never win over real text.
+    """
+    for element in anchor.find_all(["h1", "h2", "h3", "h4", "p"]):
+        title = _clean_card_text(element.get_text(" ", strip=True))
+        if title:
+            return title
+    title = _clean_card_text(anchor.get_text(" ", strip=True))
+    if title:
+        return title
+    for image in [*anchor.find_all("img"), *container.find_all("img")]:
+        alt = _clean_card_text(image.get("alt"))
+        if alt:
+            return alt
+    return ""
+
+
+def _clean_card_text(value: object) -> str:
+    """Trim a card's text down to a headline.
+
+    Cards mix the headline with the publish date, the reading time and sometimes
+    the standfirst. The date starts the metadata, so everything from it onwards is
+    dropped; a trailing "5 min read" is dropped too. A headline that legitimately
+    contains a date would be truncated, which is why this is only used on listing
+    labels and never on an article's own title.
+    """
+    text = " ".join(str(value or "").split())
+    match = ENGLISH_DATE_RE.search(text)
+    if match is not None:
+        text = text[: match.start()]
+    text = re.sub(r"\s*\d+\s*(?:min|minute|minutes)\s+read\s*$", "", text, flags=re.IGNORECASE)
+    return text.strip(" ·|·—-–\t")
+
+
+def cohere_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Cohere's blog: each card prints its date in an eyebrow line."""
+    soup = BeautifulSoup(html, "html.parser")
+    if not _listing_anchors(soup, COHERE_LINK_PREFIX):
+        # No /blog/ links at all means the listing itself is gone, which is a
+        # markup change rather than a quiet week.
+        raise PageStructureError("no /blog/ links on the Cohere blog")
+    date_elements = [
+        element
+        for element in soup.find_all(["p", "span", "time"])
+        if COHERE_DATE_CLASS in (element.get("class") or [])
+        or element.name == "time"
+    ]
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for element in date_elements:
+        card = _card_from_date_element(element, prefix=COHERE_LINK_PREFIX, base=COHERE_BASE)
+        if card is None:
+            continue
+        url, title, published = card
+        if url in seen:
+            continue
+        seen.add(url)
+        entries.append((url, title, published))
+    return entries
+
+
+def cursor_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Cursor's blog: dated directory rows, newest mixed with older cards."""
+    soup = BeautifulSoup(html, "html.parser")
+    if not _listing_anchors(soup, CURSOR_LINK_PREFIX):
+        raise PageStructureError("no /blog/ links on the Cursor blog")
+    rows = soup.select(CURSOR_ROW_SELECTOR)
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for row in rows:
+        href = str(row.get("href") or "").strip()
+        if not _is_article_path(href, CURSOR_LINK_PREFIX):
+            continue
+        time_el = row.find("time")
+        if time_el is None:
+            continue
+        published = _iso_datetime(str(time_el.get("datetime") or "")) or parse_english_date(
+            time_el.get_text(" ", strip=True)
+        )
+        if published is None:
+            continue
+        title = _cursor_row_title(row, href)
+        if not title:
+            continue
+        url = urljoin(CURSOR_BASE, href)
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def _listing_anchors(soup: BeautifulSoup, prefix: str) -> list[Tag]:
+    """Article links on a listing page, used to tell "empty" from "changed"."""
+    return [
+        anchor
+        for anchor in soup.find_all("a", href=True)
+        if _is_article_path(str(anchor["href"]), prefix)
+    ]
+
+
+def _cursor_row_title(row: Tag, href: str) -> str:
+    """A Cursor directory row's headline.
+
+    The row is a grid: a date column, a headline column, then author and reading
+    time. The headline is the first non-empty ``<p>`` that is not the date, is
+    not a duration, and is not one of the author names, which is what the first
+    two fields after the date always are.
+    """
+    for paragraph in row.select("p"):
+        text = " ".join(paragraph.get_text(" ", strip=True).split())
+        if not text or ENGLISH_DATE_RE.fullmatch(text):
+            continue
+        if re.fullmatch(r"\d+\s*(m|min|minute|minutes|h|hr|hour|hours|d|day|days)", text):
+            continue
+        return text
+    # Older rows carry the headline in a heading instead of a paragraph.
+    heading = row.find(["h1", "h2", "h3", "h4"])
+    if heading is not None:
+        text = " ".join(heading.get_text(" ", strip=True).split())
+        if text:
+            return text
+    return href.rsplit("/", 1)[-1].replace("-", " ").strip()
+
+
+def _iso_datetime(raw: str) -> datetime | None:
+    """An ISO-8601 timestamp from a ``<time datetime=...>`` attribute."""
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _result_from_entries(
     source: NewsSource,
     entries: list[tuple[str, str, datetime]],
@@ -229,6 +442,10 @@ def parse_html_page(source: NewsSource, *, index_html: str, page_html: str | Non
             entries = kimi_entries(index_html)
         elif source.id == "deepseek":
             entries = deepseek_entries(page_html or index_html)
+        elif source.id == "cohere":
+            entries = cohere_entries(index_html)
+        elif source.id == "cursor":
+            entries = cursor_entries(index_html)
         else:
             return CollectResult(
                 source_id=source.id,

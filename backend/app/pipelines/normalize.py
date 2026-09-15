@@ -33,7 +33,9 @@ def news_item_from_raw(raw: RawArticle) -> NewsItem:
         # The original body travels with the item so the fallback path (LLM
         # disabled or failed) still has the article text to show.
         content_original=raw.content,
+        content_raw=raw.content_raw,
         content_language=raw.content_language,
         content_extraction_method=raw.content_method,
+        content_quality=raw.content_quality,
         content_fetched_at=raw.content_fetched_at.isoformat() if raw.content_fetched_at else None,
     )

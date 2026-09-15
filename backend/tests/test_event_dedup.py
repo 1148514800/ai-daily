@@ -1,7 +1,7 @@
 """Phase 10.4: one event, one digest entry.
 
 The rule layer already removes the same URL and byte-equal titles, but it cannot
-see that OpenAI announcing a model, TechCrunch reporting it and 量子位
+see that OpenAI announcing a model, TechCrunch reporting it and a second outlet
 re-reporting it are one event told three ways. These tests cover the second,
 conservative layer that folds those reports together, in both directions: the
 duplicates that must merge and, more importantly, the near-misses that must not.
@@ -114,10 +114,17 @@ def techcrunch_report() -> NewsItem:
     )
 
 
-def qbitai_report() -> NewsItem:
+def ars_report() -> NewsItem:
+    """A second-hand report of the same launch, in the source set's media class.
+
+    It used to be a 量子位 write-up, and 量子位 was removed as a source in Phase
+    10.11. The property this fixture exists for is unchanged: a media source
+    reporting the same event as the vendor, with a different language and
+    wording, must merge into one digest entry.
+    """
     return item(
-        "qbitai",
-        source="量子位",
+        "ars",
+        source="Ars Technica",
         source_type="media",
         title="OpenAI 发布 GPT-6 Astra，面向企业长任务",
         title_cn="OpenAI 发布 GPT-6 Astra 新模型",
@@ -148,7 +155,7 @@ def test_near_identical_event_across_sources_merges() -> None:
 
 
 def test_official_and_chinese_media_merge_on_the_shared_model_name() -> None:
-    match = match_event(official_announcement(), qbitai_report())
+    match = match_event(official_announcement(), ars_report())
 
     assert match is not None
     assert match.shared_terms == ("gpt-6",)
@@ -157,7 +164,7 @@ def test_official_and_chinese_media_merge_on_the_shared_model_name() -> None:
 def test_same_url_is_already_handled_by_the_rule_layer() -> None:
     """Near-identical event or not, one URL is one news_id, so nothing merges."""
     first = item("a", title=ANNOUNCEMENT, summary=SUMMARY)
-    second = first.model_copy(update={"source": "量子位", "source_type": "media"})
+    second = first.model_copy(update={"source": "Ars Technica", "source_type": "media"})
 
     assert match_event(first, second) is not None
     # A digest can never see both: they share an id, so the link list already
@@ -195,7 +202,7 @@ def test_contradictory_outcome_does_not_merge() -> None:
     )
     passes = item(
         "passes",
-        source="量子位",
+        source="Ars Technica",
         source_type="media",
         title="GPT-6 Astra passes safety benchmark",
         title_cn="GPT-6 Astra 通过安全测试",
@@ -233,7 +240,7 @@ def test_funding_story_translated_across_languages_merges() -> None:
     )
     chinese = item(
         "cn",
-        source="量子位",
+        source="Ars Technica",
         source_type="media",
         title="Mecka AI nears 500M valuation",
         title_cn="Mecka AI 估值接近 5 亿美元",
@@ -260,7 +267,7 @@ def test_different_funding_amounts_do_not_merge() -> None:
     )
     eight = item(
         "800m",
-        source="量子位",
+        source="Ars Technica",
         source_type="media",
         title="Mecka AI nears 800M valuation",
         title_cn="Mecka AI 估值接近 8 亿美元",
@@ -334,7 +341,7 @@ def test_bare_headlines_merge_only_on_an_almost_exact_match() -> None:
         title="OpenAI launches GPT-6 Astra",
     )
     different = item(
-        "c", source="量子位", source_type="media", title="OpenAI ships a new chat app"
+        "c", source="Ars Technica", source_type="media", title="OpenAI ships a new chat app"
     )
 
     assert match_event(first, same) is not None
@@ -345,14 +352,14 @@ def test_bare_headlines_merge_only_on_an_almost_exact_match() -> None:
 
 
 def test_three_reports_of_one_event_become_one_entry() -> None:
-    kept, stats = dedupe_events([official_announcement(), techcrunch_report(), qbitai_report()])
+    kept, stats = dedupe_events([official_announcement(), techcrunch_report(), ars_report()])
 
     assert [entry.id for entry in kept] == ["official"]
     assert stats.candidates == 3
     assert stats.clusters == 1
     assert stats.merged == 2
     assert stats.decisions[0].kept.id == "official"
-    assert {merged.id for merged, _ in stats.decisions[0].merged} == {"media", "qbitai"}
+    assert {merged.id for merged, _ in stats.decisions[0].merged} == {"media", "ars"}
 
 
 def test_unrelated_news_keeps_every_entry() -> None:
@@ -398,7 +405,7 @@ def test_cluster_collapses_a_chain_whose_ends_do_not_match() -> None:
         }
     )
 
-    kept, stats = dedupe_events([official_announcement(), russian, qbitai_report()])
+    kept, stats = dedupe_events([official_announcement(), russian, ars_report()])
 
     assert len(kept) == 1
     assert stats.clusters == 1
@@ -409,36 +416,54 @@ def test_cluster_collapses_a_chain_whose_ends_do_not_match() -> None:
 
 
 def test_official_source_becomes_the_main_news() -> None:
-    cluster = [qbitai_report(), techcrunch_report(), official_announcement()]
+    cluster = [ars_report(), techcrunch_report(), official_announcement()]
 
     assert choose_main_news(cluster).id == "official"
     # Collection order must not decide it.
     assert choose_main_news(list(reversed(cluster))).id == "official"
 
 
-def test_community_blog_outranks_media() -> None:
+def test_research_source_outranks_media() -> None:
+    """Hugging Face is ``research`` since Phase 10.11, and still beats the press."""
     huggingface = item(
         "hf",
         source="Hugging Face",
-        source_type="blog",
+        source_type="research",
         title="A guide to evaluating agents",
     )
-    qbitai = item(
-        "qbitai",
-        source="量子位",
+    second_hand = item(
+        "ars",
+        source="Ars Technica",
         source_type="media",
         title="智能体评测指南",
         importance=99,
     )
 
-    assert choose_main_news([qbitai, huggingface]).id == "hf"
+    assert choose_main_news([second_hand, huggingface]).id == "hf"
+
+
+def test_every_configured_source_type_has_a_rank() -> None:
+    """The main-news rule reads the same class names the config declares.
+
+    A source type with no entry here is treated as unknown, which sorts *after*
+    media — the opposite of the intended order. Phase 10.11's ``blog`` ->
+    ``research`` rename hit exactly that, so the table is checked against the
+    config rather than against a hand-written list.
+    """
+    from app.config.sources import NEWS_SOURCE_TYPES
+    from app.services.event_dedup import SOURCE_TYPE_RANK
+
+    missing = [name for name in NEWS_SOURCE_TYPES if name not in SOURCE_TYPE_RANK]
+    assert missing == []
+    assert SOURCE_TYPE_RANK["official"] < SOURCE_TYPE_RANK["research"]
+    assert SOURCE_TYPE_RANK["research"] < SOURCE_TYPE_RANK["media"]
 
 
 def test_configured_priority_orders_sources_of_one_class() -> None:
     techcrunch = item("tc", source="TechCrunch AI", source_type="media", title="Same story")
-    qbitai = item("qb", source="量子位", source_type="media", title="同一事件")
+    second_hand = item("qb", source="Ars Technica", source_type="media", title="同一事件")
 
-    assert choose_main_news([qbitai, techcrunch]).id == "tc"
+    assert choose_main_news([second_hand, techcrunch]).id == "tc"
 
 
 def test_importance_and_completeness_break_ties_within_a_source_class() -> None:
@@ -524,7 +549,7 @@ def test_persist_logs_the_summary_and_keeps_detail_behind_an_env_flag(
         events.persist(
             date=DIGEST_DATE,
             window=window(),
-            news_items=[official_announcement(), techcrunch_report(), qbitai_report()],
+            news_items=[official_announcement(), techcrunch_report(), ars_report()],
             github_projects=[],
         )
     assert "candidates=3 clusters=1 merged=2" in caplog.text
@@ -536,7 +561,7 @@ def test_persist_logs_the_summary_and_keeps_detail_behind_an_env_flag(
         events.persist(
             date=DIGEST_DATE,
             window=window(),
-            news_items=[official_announcement(), techcrunch_report(), qbitai_report()],
+            news_items=[official_announcement(), techcrunch_report(), ars_report()],
             github_projects=[],
         )
     assert "KEEP OpenAI:" in caplog.text
@@ -551,7 +576,7 @@ def test_persist_links_one_entry_per_event_and_keeps_every_article() -> None:
     events.persist(
         date=DIGEST_DATE,
         window=window(),
-        news_items=[official_announcement(), techcrunch_report(), qbitai_report()],
+        news_items=[official_announcement(), techcrunch_report(), ars_report()],
         github_projects=[],
     )
 
@@ -564,7 +589,7 @@ def test_persist_links_one_entry_per_event_and_keeps_every_article() -> None:
     session = new_session()
     try:
         repository = NewsRepository(session)
-        for news_id in ("official", "media", "qbitai"):
+        for news_id in ("official", "media", "ars"):
             assert repository.get(news_id) is not None
     finally:
         session.close()
@@ -615,7 +640,7 @@ def test_repeated_refresh_is_idempotent() -> None:
         events.persist(
             date=DIGEST_DATE,
             window=window(),
-            news_items=[official_announcement(), techcrunch_report(), qbitai_report()],
+            news_items=[official_announcement(), techcrunch_report(), ars_report()],
             github_projects=[],
         )
 
@@ -706,11 +731,11 @@ def reports_for(slug: str) -> list[Report]:
             url=f"https://techcrunch.com/2026/09/13/{slug}",
         ),
         Report(
-            source_id="qbitai",
-            feed_url="https://www.qbitai.com/feed",
+            source_id="ars",
+            feed_url="https://arstechnica.com/ai/feed/",
             title="OpenAI 发布 GPT-6 Astra，面向企业长任务",
             body="新模型面向企业长任务与 agentic 工作。",
-            url=f"https://www.qbitai.com/2026/09/{slug}",
+            url=f"https://arstechnica.com/ai/2026/09/{slug}",
         ),
     ]
 
@@ -866,7 +891,7 @@ def test_adjacent_refreshes_do_not_share_a_news_id(tmp_path, monkeypatch) -> Non
             for entry in (
                 official_announcement(),
                 techcrunch_report(),
-                qbitai_report(),
+                ars_report(),
             )
         ],
         github_projects=[],
@@ -898,7 +923,7 @@ def test_thresholds_live_in_one_place() -> None:
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_output_order_is_independent_of_input_order(reverse: bool) -> None:
-    items = [official_announcement(), techcrunch_report(), qbitai_report()]
+    items = [official_announcement(), techcrunch_report(), ars_report()]
     ordered = list(reversed(items)) if reverse else items
 
     kept, stats = dedupe_events(ordered)

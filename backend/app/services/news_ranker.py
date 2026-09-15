@@ -41,10 +41,15 @@ logger = logging.getLogger(__name__)
 RANK_DEBUG_ENV = "AI_DAILY_DEBUG_RANKING"
 
 # Source class weights, matching how the rest of the pipeline already thinks
-# about provenance: a first-party announcement outranks a community write-up,
+# about provenance: a first-party announcement outranks a lab's research post,
 # which outranks second-hand reporting. The gap is deliberately small, because a
 # big media story has to be able to overtake a minor official one.
-SOURCE_TYPE_RANKS = {"official": 1.0, "blog": 0.6, "media": 0.35}
+#
+# The middle class is ``research``, the class Phase 10.11 introduced in place of
+# the old ``blog``. An unlisted type still falls back to the lowest weight, but
+# it must not be a type that actually occurs: a stale key here would silently
+# demote every Hugging Face and Microsoft Research story below the media.
+SOURCE_TYPE_RANKS = {"official": 1.0, "research": 0.6, "media": 0.35}
 UNKNOWN_SOURCE_TYPE_RANK = 0.3
 
 # How the body was obtained. Having real text is a weak signal: a long article
@@ -230,8 +235,8 @@ def _reason(item: NewsItem, topic: str, company: str, components: RankComponents
     rank = SOURCE_TYPE_RANKS.get(item.source_type, UNKNOWN_SOURCE_TYPE_RANK)
     if rank >= 1.0:
         parts.append("official source")
-    elif item.source_type == "blog":
-        parts.append("community source")
+    elif item.source_type == "research":
+        parts.append("research source")
     else:
         parts.append("media source")
     if components.content >= 0.6:

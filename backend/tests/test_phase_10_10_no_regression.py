@@ -83,16 +83,21 @@ def test_ranking_fields_are_still_served(client) -> None:
     assert all("rank_score" in item for item in news)
 
 
-def test_detail_still_returns_the_original_body(client) -> None:
+def test_the_body_is_still_reachable_on_demand(client) -> None:
     from app.services.digest_store import DigestStore
 
     DigestStore().refresh(now=FROZEN_NOW, fetch_text=make_fixture_fetch(*day_feeds("2026-09-11")))
     news_id = client.get("/api/v1/daily/2026-09-11").json()["news"][0]["id"]
 
-    response = client.get(f"/api/v1/news/{news_id}")
+    detail = client.get(f"/api/v1/news/{news_id}")
+    content = client.get(f"/api/v1/news/{news_id}/content")
 
-    assert response.status_code == 200
-    assert "content_original" in response.json()
+    assert detail.status_code == 200
+    assert content.status_code == 200
+    # Phase 10.11: the detail response describes the body, the content endpoint
+    # returns it. Both routes still exist, so nothing became unreachable.
+    assert "has_content" in detail.json()
+    assert "content_original" in content.json()
 
 
 def test_the_list_view_still_hides_the_body(client) -> None:

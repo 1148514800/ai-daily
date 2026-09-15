@@ -16,6 +16,7 @@ from app.jobs.backfill_article_content import backfill, main
 from app.models import NewsCategory, NewsItem
 from app.services.article_extractor import ExtractionSettings
 from app.services.digest_window import DigestWindow
+from tests.conftest import stored_body
 
 UTC = timezone.utc
 
@@ -101,8 +102,9 @@ def test_backfill_fills_bodies_for_stored_articles(tmp_path: Path) -> None:
         for news_id in ids:
             stored = NewsRepository(session).get_detail(news_id)
             assert stored is not None
-            assert BODY in stored.content_original
+            assert BODY in stored_body(session, news_id)
             assert stored.content_language == "en"
+            assert stored.has_content is True
     finally:
         session.close()
 
@@ -179,11 +181,11 @@ def test_one_failing_page_does_not_stop_the_backfill(tmp_path: Path) -> None:
     # The two readable articles got their real bodies; the blocked one fell back
     # to its RSS summary exactly as a normal refresh would, and is marked as a
     # fallback rather than silently looking like a successful extraction.
-    assert BODY in (healthy.content_original if healthy else "")
+    assert BODY in stored_body(session, "rss-0001")
     assert healthy is not None and healthy.content_extraction_method == "web"
     assert broken is not None
     assert broken.content_extraction_method == "rss_summary"
-    assert broken.content_original == "摘要 2"
+    assert stored_body(session, "rss-0002") == "摘要 2"
 
 
 def test_backfill_cli_reports_a_summary(tmp_path: Path, monkeypatch, capsys) -> None:

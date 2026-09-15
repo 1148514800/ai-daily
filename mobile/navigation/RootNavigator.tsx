@@ -83,13 +83,7 @@ export function RootNavigator() {
   } else if (tab === 'settings') {
     screen = <SettingsScreen />;
   } else {
-    screen = (
-      <TodayScreen
-        onOpenNews={(id) => push({ name: 'news', id })}
-        onOpenHistory={() => setTab('history')}
-        onOpenSearch={() => push({ name: 'search' })}
-      />
-    );
+    screen = <TodayScreen onOpenNews={(id) => push({ name: 'news', id })} />;
   }
 
   return (

@@ -256,10 +256,11 @@ def test_daily_api_keeps_every_existing_field(ranked_client: TestClient) -> None
 
 
 def test_daily_api_does_not_leak_the_article_body(ranked_client: TestClient) -> None:
-    """The digest list stays lean; only the detail endpoint ships the body."""
+    """The digest list stays lean: the body is only ever fetched on demand."""
     first = ranked_client.get("/api/v1/daily").json()["news"][0]
 
     assert "content_original" not in first
+    assert "has_content" not in first
 
 
 def test_daily_api_by_date_is_ranked_too(ranked_client: TestClient) -> None:
@@ -270,15 +271,20 @@ def test_daily_api_by_date_is_ranked_too(ranked_client: TestClient) -> None:
     assert [item["rank"] for item in news] == list(range(1, len(news) + 1))
 
 
-def test_news_detail_still_returns_the_original_body(ranked_client: TestClient) -> None:
-    """Article detail must not regress: ranking is a list-level concern."""
+def test_news_content_endpoint_still_serves_the_original_body(
+    ranked_client: TestClient,
+) -> None:
+    """Article text is still available: how it is fetched changed, not whether."""
     first = ranked_client.get("/api/v1/daily").json()["news"][0]
     detail = ranked_client.get(f"/api/v1/news/{first['id']}")
+    content = ranked_client.get(f"/api/v1/news/{first['id']}/content")
 
     assert detail.status_code == 200
+    assert content.status_code == 200
     body = detail.json()
-    assert "content_original" in body
-    assert body["content_language"] is not None
+    assert "content_original" not in body
+    assert body["has_content"] in {True, False}
+    assert content.json()["news_id"] == first["id"]
 
 
 # --- topic labels on the API (Phase 10.7) ---

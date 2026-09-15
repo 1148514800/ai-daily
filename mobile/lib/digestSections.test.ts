@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  MUST_READ_LIMIT,
-  buildDigestSections,
-  summarizeDigest,
-} from './digestSections.ts';
+import { buildDigestSections, summarizeDigest } from './digestSections.ts';
 import type { NewsItem } from '../types';
 
 type Extra = Partial<Pick<NewsItem, 'rank' | 'is_top_story' | 'source' | 'topic' | 'company'>>;
@@ -33,74 +29,61 @@ function item(id: string, extra: Extra = {}): NewsItem {
   };
 }
 
-/** A digest with `total` stories, the first ten marked as top stories. */
-function digest(total: number): NewsItem[] {
-  return Array.from({ length: total }, (_, index) => {
-    const rank = index + 1;
-    const isTop = rank <= 10;
-    return item(`n${rank}`, { rank, is_top_story: isTop });
-  });
+function digest(count: number): NewsItem[] {
+  return Array.from({ length: count }, (_, index) =>
+    item(`n${index + 1}`, {
+      rank: index + 1,
+      // The backend marks the leading ten; the rest are still returned.
+      is_top_story: index < 10,
+    }),
+  );
 }
 
-function keys(sections: { key: string }[]): string[] {
+function keys(sections: ReturnType<typeof buildDigestSections>): string[] {
   return sections.map((section) => section.key);
 }
 
-// --- the three tiers ---
+// --- sections ---
 
-test('buildDigestSections puts ranks 1-3 in must read', () => {
+test('buildDigestSections no longer has a must-read tier', () => {
   const sections = buildDigestSections(digest(18));
-  const mustRead = sections.find((section) => section.key === 'must_read');
 
-  assert.deepEqual(
-    mustRead?.items.map((entry) => entry.id),
-    ['n1', 'n2', 'n3'],
-  );
+  // Phase 10.11 removed 今日必看: the ranking is presented once, not twice.
+  assert.deepEqual(keys(sections), ['top', 'more']);
+  assert.ok(!sections.some((section) => (section.key as string) === 'must_read'));
+  assert.ok(!sections.some((section) => section.title === '今日必看'));
 });
 
-test('buildDigestSections puts ranks 4-10 in top stories', () => {
+test('buildDigestSections puts every top story in one section', () => {
   const sections = buildDigestSections(digest(18));
   const top = sections.find((section) => section.key === 'top');
 
-  assert.deepEqual(
-    top?.items.map((entry) => entry.id),
-    ['n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10'],
-  );
+  assert.equal(top?.items.length, 10);
+  assert.equal(top?.title, '重点新闻');
 });
 
-test('buildDigestSections puts rank 11 and beyond in more', () => {
+test('buildDigestSections keeps the remaining stories in more', () => {
   const sections = buildDigestSections(digest(18));
   const more = sections.find((section) => section.key === 'more');
 
   assert.equal(more?.items.length, 8);
-  assert.equal(more?.items[0].id, 'n11');
+  assert.equal(more?.title, '更多动态');
 });
 
-test('buildDigestSections keeps every story across the three tiers', () => {
+test('buildDigestSections keeps every story exactly once', () => {
   const sections = buildDigestSections(digest(18));
-  const flattened = sections.flatMap((section) => section.items.map((entry) => entry.id));
+  const ids = sections.flatMap((section) => section.items.map((entry) => entry.id));
 
-  assert.deepEqual(flattened, Array.from({ length: 18 }, (_, index) => `n${index + 1}`));
+  assert.equal(ids.length, 18);
+  assert.equal(new Set(ids).size, 18);
 });
 
-test('buildDigestSections splits at the documented boundary', () => {
-  assert.equal(MUST_READ_LIMIT, 3);
-  const sections = buildDigestSections(digest(11));
-  const byKey = Object.fromEntries(sections.map((section) => [section.key, section.items.length]));
+test('buildDigestSections reads top-down without a second split', () => {
+  const sections = buildDigestSections(digest(18));
+  const ranks = sections.flatMap((section) => section.items.map((entry) => entry.rank));
 
-  assert.deepEqual(byKey, { must_read: 3, top: 7, more: 1 });
-});
-
-// --- short digests ---
-
-test('buildDigestSections handles a digest shorter than three', () => {
-  const sections = buildDigestSections([
-    item('a', { rank: 1, is_top_story: true }),
-    item('b', { rank: 2, is_top_story: true }),
-  ]);
-
-  assert.deepEqual(keys(sections), ['must_read']);
-  assert.equal(sections[0].items.length, 2);
+  // One continuous ranking: 1..18, with no story pulled out of order.
+  assert.deepEqual(ranks, Array.from({ length: 18 }, (_, index) => index + 1));
 });
 
 test('buildDigestSections handles a digest shorter than ten', () => {
@@ -108,47 +91,16 @@ test('buildDigestSections handles a digest shorter than ten', () => {
     item('a', { rank: 1, is_top_story: true }),
     item('b', { rank: 2, is_top_story: true }),
     item('c', { rank: 3, is_top_story: true }),
-    item('d', { rank: 4, is_top_story: true }),
   ]);
 
-  assert.deepEqual(keys(sections), ['must_read', 'top']);
-  assert.equal(sections[1].items.length, 1);
+  assert.deepEqual(keys(sections), ['top']);
+  assert.equal(sections[0].items.length, 3);
 });
 
 test('buildDigestSections omits an empty section rather than rendering a heading', () => {
-  // Exactly three top stories and nothing else: only "must read" exists.
-  const sections = buildDigestSections([
-    item('a', { rank: 1, is_top_story: true }),
-    item('b', { rank: 2, is_top_story: true }),
-    item('c', { rank: 3, is_top_story: true }),
-  ]);
+  const sections = buildDigestSections([item('a', { rank: 1, is_top_story: true })]);
 
-  assert.deepEqual(keys(sections), ['must_read']);
-});
-
-test('buildDigestSections marks exactly the first three as must read, never more', () => {
-  // Guards the boundary from the other side: a fourth top story must not creep
-  // into the landing tier just because it is also flagged.
-  const sections = buildDigestSections(digest(10));
-  const mustRead = sections.find((section) => section.key === 'must_read');
-  const top = sections.find((section) => section.key === 'top');
-
-  assert.equal(mustRead?.items.length, MUST_READ_LIMIT);
-  assert.equal(top?.items.length, 7);
-  assert.ok(!mustRead?.items.some((entry) => entry.rank === 4));
-});
-
-test('buildDigestSections never duplicates a story between tiers', () => {
-  const sections = buildDigestSections(digest(20));
-  const ids = sections.flatMap((section) => section.items.map((entry) => entry.id));
-
-  assert.equal(new Set(ids).size, ids.length);
-});
-
-test('buildDigestSections handles a digest with no more news', () => {
-  const sections = buildDigestSections(digest(10));
-
-  assert.deepEqual(keys(sections), ['must_read', 'top']);
+  assert.deepEqual(keys(sections), ['top']);
 });
 
 test('buildDigestSections returns nothing for an empty digest', () => {
@@ -156,6 +108,7 @@ test('buildDigestSections returns nothing for an empty digest', () => {
 });
 
 test('buildDigestSections puts an unflagged digest entirely in more', () => {
+  // A digest written before ranking existed has no top story to call out.
   const sections = buildDigestSections([item('a'), item('b')]);
 
   assert.deepEqual(keys(sections), ['more']);
@@ -176,7 +129,7 @@ test('buildDigestSections restores rank order from an unordered payload', () => 
   );
 });
 
-test('buildDigestSections sorts unranked items last', () => {
+test('buildDigestSections sorts unranked items last without regrouping them', () => {
   const sections = buildDigestSections([item('z'), item('a', { rank: 1, is_top_story: true })]);
 
   assert.deepEqual(
@@ -203,9 +156,9 @@ test('summarizeDigest counts total, top stories, sources and topics', () => {
 
 test('summarizeDigest counts a repeated source once', () => {
   const overview = summarizeDigest([
-    item('a', { source: '量子位' }),
-    item('b', { source: '量子位' }),
-    item('c', { source: '量子位' }),
+    item('a', { source: 'Cohere' }),
+    item('b', { source: 'Cohere' }),
+    item('c', { source: 'Cohere' }),
   ]);
 
   assert.equal(overview.sources, 1);

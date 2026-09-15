@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+<title>AI - Ars Technica</title>
+<link>https://arstechnica.com</link>
+<description>Serving the Technologist since 1998. News, reviews, and analysis.</description>
+<language>en-US</language>
+<item>
+                <title>I spent $4,000 on a robot dog from China</title>
+                <link>https://arstechnica.com/gadgets/2026/09/i-spent-4000-on-a-robot-dog-from-china/</link>
+                                    <comments>https://arstechnica.com/gadgets/2026/09/i-spent-4000-on-a-robot-dog-from-china/#comments</comments>
+                
+                <dc:creator>
+                    <![CDATA[Timothy B. Lee]]>
+                </dc:creator>
+                <pubDate>Sat, 12 Sep 2026 11:00:53 +0000</pubDate>
+                		<category><![CDATA[AI]]></category>
+		<category><![CDATA[Tech]]></category>
+		<category><![CDATA[china]]></category>
+		<category><![CDATA[chinese robots]]></category>
+		<category><![CDATA[robot dog]]></category>
+		<category><![CDATA[robots]]></category>
+		<category><![CDATA[syndication]]></category>
+		<category><![CDATA[Unitree]]></category>
+		<category><![CDATA[Unitree Robotics]]></category>
+                <guid isPermaLink="true">https://arstechnica.com/gadgets/2026/09/i-spent-4000-on-a-robot-dog-from-china/</guid>
+
+                                    <description>
+                        <![CDATA[Unitree might be the world’s most important robotics company.]]>
+                    </description>
+                                                                <content:encoded>
+                            <![CDATA[<p>On a sunny morning in June, I walked to work with a quadruped robot beside me. I’ve never gotten more attention from strangers.</p>
+<p>A bunch of people snapped pictures of my robot dog. Several people asked me questions. Was it mine? (Yes.) Did I build it? (No.) Was it being used for surveillance? (No.)</p>
+<p>Biological dogs kept a safe distance from my mechanical companion. Some growled or barked at it.</p><p><a href="https://arstechnica.com/gadgets/2026/09/i-spent-4000-on-a-robot-dog-from-china/">Read full article</a></p>
+<p><a href="https://arstechnica.com/gadgets/2026/09/i-spent-4000-on-a-robot-dog-from-china/#comments">Comments</a></p>
+]]>
+                        </content:encoded>
+                                    
+                                    <slash:comments>247</slash:comments>
+                
+                
+                <media:content url="https://cdn.arstechnica.net/wp-content/uploads/2026/09/80276b2c-6940-443f-adf2-2aabe4d1e838_2048x1365-1152x648.jpg" type="image/jpeg" medium="image" width="1152" height="648">
+<media:thumbnail url="https://cdn.arstechnica.net/wp-content/uploads/2026/09/80276b2c-6940-443f-adf2-2aabe4d1e838_2048x1365-500x500.jpg" width="500" height="500" />
+<media:credit>Nat Purser</media:credit><media:text>Me at the office with my Unitree Go2 Pro robot dog.</media:text></media:content>
+            </item>
+<item>
+                <title>Claude users found ways around safeguards for bioweapons research</title>
+                <link>https://arstechnica.com/ai/2026/09/claude-users-found-ways-around-safeguards-for-bioweapons-research/</link>
+                                    <comments>https://arstechnica.com/ai/2026/09/claude-users-found-ways-around-safeguards-for-bioweapons-research/#comments</comments>
+                
+                <dc:creator>
+                    <![CDATA[Zehra Munir, Financial Times]]>
+                </dc:creator>
+                <pubDate>Fri, 11 Sep 2026 13:02:35 +0000</pubDate>
+                		<category><![CDATA[AI]]></category>
+		<category><![CDATA[Anthropic]]></category>
+		<category><![CDATA[Anthropic Claude]]></category>
+		<category><![CDATA[bioweapons]]></category>
+		<category><![CDATA[cybersecurity]]></category>
+		<category><![CDATA[syndication]]></category>
+                <guid isPermaLink="true">https://arstechnica.com/ai/2026/09/claude-users-found-ways-around-safeguards-for-bioweapons-research/</guid>
+
+                                    <description>
+                        <![CDATA[Some dangerous biology looks much like legitimate research, complicating AI safeguards.]]>
+                    </description>
+                                                                <content:encoded>
+                            <![CDATA[<p>Anthropic said it stopped multiple attempts by scientists this year to use its technology for research that could help develop biological weapons, as experts increasingly fear the threat that AI poses to public safety.</p>
+<p>The startup gave five examples of times actors “circumvented controls” and made other efforts to “obfuscate” the purpose of their research to dodge safeguards. The cases involved some users in nations that it prohibits from accessing its models, which include Russia, China, and Iran.</p>
+<p>“We hope that by sharing these examples, we spark a conversation within the AI industry and with governments about emerging biological risks and how best to counter them,” Anthropic said in a report about efforts to use its models for malicious activity.</p><p><a href="https://arstechnica.com/ai/2026/09/claude-users-found-ways-around-safeguards-for-bioweapons-research/">Read full article</a></p>
+<p><a href="https://arstechnica.com/ai/2026/09/claude-users-found-ways-around-safeguards-for-bioweapons-research/#comments">Comments</a></p>
+]]>
+                        </content:encoded>
+                                    
+                                    <slash:comments>103</slash:comments>
+                
+                
+                <media:content url="https://cdn.arstechnica.net/wp-content/uploads/2026/03/claude-app-1152x648.jpg" type="image/jpeg" medium="image" width="1152" height="648">
+<media:thumbnail url="https://cdn.arstechnica.net/wp-content/uploads/2026/03/claude-app-500x500-1773164045.jpg" width="500" height="500" />
+<media:credit>Getty Images | picture alliance</media:credit></media:content>
+            </item>
+</channel>
+</rss>

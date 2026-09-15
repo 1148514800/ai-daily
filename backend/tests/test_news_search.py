@@ -292,11 +292,15 @@ def test_search_never_returns_the_article_body(client) -> None:
         assert "content_language" not in row
 
 
-def test_detail_still_returns_the_body(client) -> None:
+def test_the_body_is_served_by_the_content_endpoint(client) -> None:
+    """Search stays lean, and the body is still one request away."""
     seed([article("rss-body", title_cn="标题", body="DeepSeek 的完整正文内容")])
     detail = client.get("/api/v1/news/rss-body").json()
+    content = client.get("/api/v1/news/rss-body/content").json()
 
-    assert detail["content_original"] == "DeepSeek 的完整正文内容"
+    assert "content_original" not in detail
+    assert detail["has_content"] is True
+    assert content["content_original"] == "DeepSeek 的完整正文内容"
 
 
 def test_search_api_shape(client) -> None:

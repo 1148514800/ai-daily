@@ -291,7 +291,7 @@ def test_english_article_stays_english() -> None:
 
 def test_chinese_article_stays_chinese() -> None:
     content = extract_article(
-        url="https://www.qbitai.com/2026/09/a",
+        url="https://www.ithome.com/2026/09/a",
         title="新的推理模式",
         feed_summary="一句话摘要。",
         settings=settings(),

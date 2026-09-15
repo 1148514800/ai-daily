@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NewsItem } from '../types';
 import { formatRelativeTime } from '../lib/relativeTime';
+import { sourceBadgeLabel } from '../lib/sourceType';
 import { topicLabel } from '../lib/topics';
 import { colors, radius, spacing, typography } from '../theme';
 import { Chip } from './Chip';
@@ -12,17 +13,9 @@ const CATEGORY_LABEL: Record<NewsItem['category'], string> = {
   tool: 'AI 工具',
 };
 
-/**
- * ``must_read`` is the landing-page treatment for the first few stories: a
- * larger title, a longer summary and a rank marker, so the top of the digest is
- * scannable in a few seconds without becoming a different kind of card.
- */
-export type NewsCardVariant = 'default' | 'must_read';
-
 type NewsCardProps = {
   item: NewsItem;
   onPress: (id: string) => void;
-  variant?: NewsCardVariant;
   /**
    * The digest's date, used to decide whether relative wording ("2小时前") is
    * honest. A past digest is labelled absolutely so it never says "刚刚".
@@ -35,28 +28,22 @@ type NewsCardProps = {
 export function NewsCard({
   item,
   onPress,
-  variant = 'default',
   digestDate,
   now,
 }: NewsCardProps) {
-  const mustRead = variant === 'must_read';
   const topic = topicLabel(item.topic);
   const time = formatRelativeTime(item.published_at, { digestDate, now });
+  // The badge is the backend's `source_type`, never a guess from the source's
+  // name: the server owns the classification the ranking is built on.
+  const badge = sourceBadgeLabel(item.source_type);
 
   return (
     <Pressable
       onPress={() => onPress(item.id)}
       android_ripple={{ color: colors.overlay }}
-      style={({ pressed }) => [
-        styles.card,
-        mustRead && styles.mustReadCard,
-        pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
     >
       <View style={styles.metaRow}>
-        {mustRead && item.rank ? (
-          <Text style={styles.rankMark}>#{item.rank}</Text>
-        ) : null}
         {/* At most one topic tag: a card that shows three labels shows none. */}
         {topic ? (
           <Chip label={topic} tone="accent" />
@@ -66,6 +53,7 @@ export function NewsCard({
             tone={item.category === 'highlight' ? 'accent' : 'neutral'}
           />
         )}
+        {badge ? <Chip label={badge} /> : null}
         <Text style={styles.meta}>{item.source}</Text>
         {time ? (
           <>
@@ -74,11 +62,11 @@ export function NewsCard({
           </>
         ) : null}
       </View>
-      <Text style={[styles.title, mustRead && styles.mustReadTitle]} numberOfLines={mustRead ? 4 : 3}>
+      <Text style={styles.title} numberOfLines={3}>
         {item.title_cn}
       </Text>
       {item.summary ? (
-        <Text style={styles.summary} numberOfLines={mustRead ? 3 : 2}>
+        <Text style={styles.summary} numberOfLines={2}>
           {item.summary}
         </Text>
       ) : null}
@@ -95,13 +83,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginBottom: spacing.sm,
   },
-  mustReadCard: {
-    padding: spacing.md + 2,
-    borderColor: colors.accentSoft,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    marginBottom: spacing.md,
-  },
   pressed: {
     opacity: 0.92,
   },
@@ -112,20 +93,10 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: spacing.sm,
   },
-  rankMark: {
-    ...typography.subtitle,
-    fontSize: 15,
-    color: colors.accent,
-  },
   title: {
     ...typography.subtitle,
     color: colors.text,
     marginBottom: 8,
-  },
-  mustReadTitle: {
-    ...typography.title,
-    fontSize: 19,
-    lineHeight: 27,
   },
   summary: {
     ...typography.body,

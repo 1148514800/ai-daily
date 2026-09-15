@@ -27,7 +27,7 @@ def test_url_duplicates_are_removed() -> None:
     second = article(
         source_id="huggingface",
         source="Hugging Face",
-        source_type="blog",
+        source_type="research",
         url="https://huggingface.co/blog/eval-datasets/",
     )
     result = dedupe_articles([first, second])
@@ -52,7 +52,7 @@ def test_identical_titles_within_48h_are_duplicates() -> None:
 
 def test_different_titles_are_kept() -> None:
     first = article(title="Scaling world models", url="https://deepmind.google/blog/scaling-world-models")
-    second = article(title="Cool Model Card", url="https://huggingface.co/blog/cool-model", source_id="huggingface", source="Hugging Face", source_type="blog")
+    second = article(title="Cool Model Card", url="https://huggingface.co/blog/cool-model", source_id="huggingface", source="Hugging Face", source_type="research")
     result = dedupe_articles([first, second])
     assert len(result) == 2
 
@@ -66,7 +66,7 @@ def test_dedup_is_stable() -> None:
     items = [
         article(title="Same Title", url="https://openai.com/a", source_id="openai", source_type="official"),
         article(title="Same Title", url="https://deepmind.google/a", source_id="deepmind", source="Google DeepMind", source_type="official"),
-        article(title="Same Title", url="https://huggingface.co/a", source_id="huggingface", source="Hugging Face", source_type="blog"),
+        article(title="Same Title", url="https://huggingface.co/a", source_id="huggingface", source="Hugging Face", source_type="research"),
     ]
     first = [item.url for item in dedupe_articles(items)]
     second = [item.url for item in dedupe_articles(list(reversed(items)))]

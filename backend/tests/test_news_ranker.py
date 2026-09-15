@@ -111,6 +111,33 @@ def test_big_media_story_can_be_outranked_by_nothing_but_importance() -> None:
     assert order(items) == ["big-media", "minor-official"]
 
 
+def test_research_outranks_media_at_equal_importance() -> None:
+    """The tier order is official > research > media, not official > media."""
+    items = [
+        news("media", source="Ars Technica", source_type="media", importance=70),
+        news("research", source="Hugging Face", source_type="research", importance=70),
+    ]
+
+    assert order(items) == ["research", "media"]
+
+
+def test_every_configured_source_type_has_a_weight() -> None:
+    """No configured source class may fall through to the unknown weight.
+
+    Phase 10.11 renamed ``blog`` to ``research``; the weight table kept the old
+    key, which silently demoted both research sources below the press. Tying the
+    table to ``NEWS_SOURCE_TYPES`` makes that class of rename fail a test instead
+    of quietly reordering the digest.
+    """
+    from app.config.sources import NEWS_SOURCE_TYPES
+    from app.services.news_ranker import SOURCE_TYPE_RANKS
+
+    missing = [name for name in NEWS_SOURCE_TYPES if name not in SOURCE_TYPE_RANKS]
+    assert missing == []
+    assert SOURCE_TYPE_RANKS["official"] > SOURCE_TYPE_RANKS["research"]
+    assert SOURCE_TYPE_RANKS["research"] > SOURCE_TYPE_RANKS["media"]
+
+
 def test_content_quality_is_a_weak_signal() -> None:
     """A full body beats a feed teaser, but only by a little."""
     items = [

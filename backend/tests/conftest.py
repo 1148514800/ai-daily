@@ -159,14 +159,54 @@ def techcrunch_rss_xml() -> str:
 
 
 @pytest.fixture
-def qbitai_rss_xml() -> str:
-    return read_fixture("qbitai.xml")
+def mistral_rss_xml() -> str:
+    return read_fixture("mistral_blog.xml")
+
+
+@pytest.fixture
+def microsoft_research_rss_xml() -> str:
+    return read_fixture("microsoft_research.xml")
+
+
+@pytest.fixture
+def ars_technica_rss_xml() -> str:
+    return read_fixture("ars_technica_ai.xml")
+
+
+@pytest.fixture
+def cohere_blog_html() -> str:
+    return read_fixture("cohere_blog.html")
+
+
+@pytest.fixture
+def cursor_blog_html() -> str:
+    return read_fixture("cursor_blog.html")
 
 
 EMPTY_RSS = (
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
     "<rss version=\"2.0\"><channel><title>Empty</title></channel></rss>\n"
 )
+
+
+def stored_body(session, news_id: str) -> str:
+    """The original body of a stored article.
+
+    Since Phase 10.11 the body is not part of any list or detail payload, so it
+    has to be read explicitly through the repository's content accessor. Tests
+    that only care about the text use this instead of ``get_detail``.
+    """
+    from app.db.repositories import NewsRepository
+
+    content = NewsRepository(session).get_content(news_id)
+    return content.content_original if content is not None else ""
+
+
+def api_body(client, news_id: str) -> str:
+    """The original body as the API returns it, from the content endpoint."""
+    response = client.get(f"/api/v1/news/{news_id}/content")
+    assert response.status_code == 200, response.text
+    return response.json()["content_original"]
 
 # Pages that load but list nothing, so an unmapped source still succeeds with
 # zero news instead of failing. Each keeps whichever structure its extractor
@@ -180,6 +220,17 @@ EMPTY_HTML = {
     "kimi": (
         "<html><body><script>self.__next_f.push([1,\"1:[{\\\"articleList\\\":"
         "{\\\"items\\\":[]}}]\\n\"])</script></body></html>"
+    ),
+    # Both are listing pages whose card markup is present but carries no dated
+    # entry, so the extractor returns zero news instead of reporting a change.
+    "cohere": (
+        "<html><body><a href=\"/blog/placeholder\">Placeholder</a>"
+        "<p>No posts yet.</p></body></html>"
+    ),
+    "cursor": (
+        "<html><body><div class=\"blog-directory card-border\">"
+        "<a class=\"blog-directory__row\" href=\"/blog/placeholder\">Placeholder</a>"
+        "</div></body></html>"
     ),
 }
 

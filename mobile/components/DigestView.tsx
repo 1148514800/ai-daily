@@ -33,9 +33,10 @@ export function DigestView({
   headerNote,
 }: DigestViewProps) {
   // The server ranks the digest and marks the leading stories, so the split
-  // into 今日必看 / 重点新闻 / 更多动态 is a read of the payload rather than a
-  // second opinion. Every story is rendered: the lower-ranked ones are not
-  // dropped, they just sit further down.
+  // into 重点新闻 / 更多动态 is a read of the payload rather than a second
+  // opinion. Every story is rendered in the server's order: the lower-ranked
+  // ones are not dropped, they just sit further down, and each card carries its
+  // own source-class badge instead of being regrouped by source.
   const sections = buildDigestSections(digest.news);
   const overview = summarizeDigest(digest.news);
   const github = digest.github_projects ?? [];
@@ -66,7 +67,6 @@ export function DigestView({
               key={item.id}
               item={item}
               onPress={onOpenNews}
-              variant={section.key === 'must_read' ? 'must_read' : 'default'}
               digestDate={digest.date}
             />
           ))}

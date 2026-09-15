@@ -20,7 +20,7 @@ from app.db.models import (
     utcnow,
 )
 from app.config.ranking import top_story_limit
-from app.models import GitHubProject, NewsCategory, NewsDetail, NewsItem
+from app.models import GitHubProject, NewsCategory, NewsContent, NewsDetail, NewsItem
 from app.pipelines.urls import canonicalize_url
 from app.services.news_topics import label_article
 from app.services.news_search import index_items
@@ -88,10 +88,12 @@ def _as_utc(value: datetime | None) -> datetime | None:
 
 
 def _news_row_fields(row: NewsArticleRow) -> dict:
-    """The column values both the list and the detail model are built from.
+    """The column values every article shape is built from, minus the body.
 
-    The two models share every field, so the mapping lives here once and each
-    model just adds the body fields it exposes.
+    The body is deliberately absent: the digest list must not send it and, since
+    Phase 10.11, the detail response does not either. Only the description of the
+    body is added by ``_body_fields``, so a caller has to ask for the text
+    explicitly through ``get_content``.
 
     Text columns are read defensively: ``_add_missing_sqlite_columns`` adds new
     columns with ``ALTER TABLE ADD COLUMN`` and no default, which leaves NULL in
@@ -110,14 +112,16 @@ def _news_row_fields(row: NewsArticleRow) -> dict:
         tags=[row.source] if row.source else [],
         url=row.url or "",
         importance_score=row.importance_score,
-        # Carried on the model but excluded from list serialisation, so the
-        # digest response stays small while the detail endpoint has the body.
-        content_original=row.content_original or "",
+    )
+
+
+def _body_fields(row: NewsArticleRow) -> dict:
+    """Everything the client may know about the body without receiving it."""
+    return dict(
+        has_content=bool((row.content_original or "").strip()),
         content_language=row.content_language or "",
         content_extraction_method=row.content_extraction_method or "",
-        content_fetched_at=_as_utc(row.content_fetched_at).isoformat()
-        if row.content_fetched_at
-        else None,
+        content_quality=row.content_quality or "",
     )
 
 
@@ -144,13 +148,19 @@ def _news_row_with_rank(
 
 
 def _news_row_to_detail(row: NewsArticleRow) -> NewsDetail:
-    """The same row as a detail view, with the original body included.
+    """The same row as the detail screen sees it: labels, no body."""
+    return NewsDetail(**_news_row_fields(row), **_body_fields(row))
 
-    Built from the row rather than from the list item because the list model
-    excludes the body fields from serialisation, and a round-trip through
-    ``model_dump`` would drop them here too.
-    """
-    return NewsDetail(**_news_row_fields(row))
+
+def _news_row_to_content(row: NewsArticleRow) -> NewsContent:
+    """The stored original body, for the on-demand content endpoint."""
+    return NewsContent(
+        news_id=row.id,
+        content_original=row.content_original or "",
+        content_language=row.content_language or "",
+        content_extraction_method=row.content_extraction_method or "",
+        content_quality=row.content_quality or "",
+    )
 
 
 def _label_news(item: NewsItemT) -> NewsItemT:
@@ -221,9 +231,12 @@ class NewsRepository:
                         canonical_url=canonical,
                         importance_score=item.importance_score,
                         content_original=item.content_original,
+                        content_raw=item.content_raw,
                         content_language=item.content_language,
                         content_extraction_method=item.content_extraction_method,
-                        content_fetched_at=_parse_datetime(item.content_fetched_at or ""),
+                        content_quality=item.content_quality,
+                        content_fetched_at=_parse_datetime(item.content_fetched_at or "")
+                        or (utcnow() if item.content_original else None),
                     )
                 )
             else:
@@ -240,9 +253,13 @@ class NewsRepository:
                 row.importance_score = item.importance_score
                 if item.content_original:
                     row.content_original = item.content_original
+                    row.content_raw = item.content_raw
                     row.content_language = item.content_language
                     row.content_extraction_method = item.content_extraction_method
-                    row.content_fetched_at = _parse_datetime(item.content_fetched_at or "")
+                    row.content_quality = item.content_quality
+                    row.content_fetched_at = _parse_datetime(
+                        item.content_fetched_at or ""
+                    ) or utcnow()
             touched += 1
         self.session.flush()
         # The search index is derived from the rows above, so it is refreshed
@@ -268,6 +285,14 @@ class NewsRepository:
         # derived labels the digest card showed next to its rank.
         return _label_news(_news_row_to_detail(row))
 
+    def get_content(self, news_id: str) -> NewsContent | None:
+        """The stored original body of one article, or None when the article
+        does not exist. An article that exists without a body returns an empty
+        ``content_original`` rather than None: "this article has no body" and
+        "there is no such article" are different answers."""
+        row = self.session.get(NewsArticleRow, news_id)
+        return None if row is None else _news_row_to_content(row)
+
     def set_content(
         self,
         news_id: str,
@@ -275,6 +300,8 @@ class NewsRepository:
         content: str,
         language: str,
         method: str,
+        quality: str = "",
+        raw: str = "",
         fetched_at: datetime | None = None,
     ) -> bool:
         """Store an extracted body without touching the digest association."""
@@ -282,13 +309,23 @@ class NewsRepository:
         if row is None:
             return False
         row.content_original = content
+        row.content_raw = raw
         row.content_language = language
         row.content_extraction_method = method
+        row.content_quality = quality
         row.content_fetched_at = fetched_at or utcnow()
         self.session.flush()
         # The body just became searchable, so the index row is replaced with the
-        # text that was actually stored.
-        index_items(self.session, [_news_row_to_item(row)])
+        # text that was actually stored. The indexed item is built with the body
+        # because the read shapes deliberately do not carry one.
+        index_items(
+            self.session,
+            [
+                _news_row_to_item(row).model_copy(
+                    update={"content_original": row.content_original or ""}
+                )
+            ],
+        )
         return True
 
     def list_missing_content(

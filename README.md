@@ -4,11 +4,11 @@
 
 ## 当前开发阶段
 
-Phase 10.10 - Environment Safety + Release Readiness
+Phase 10.11 - Source Quality + Digest UI Cleanup + Article Content Cleanup
 
-今日 AI 新闻来自中外官方模型厂商与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页分为**今日必看 / 重点新闻 / 更多动态**三层，可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
+今日 AI 新闻来自中外官方模型厂商、研究实验室与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页是一条服务端 rank 顺序的新闻列表（**重点新闻 / 更多动态**两段，每条带 官方 / 研究 / 媒体 来源标签），可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
 
-当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后可以阅读**原始语言的完整正文**。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
+当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后先看到标题 / 来源 / 时间 / 中文摘要 / Why it matters，正文**按需加载**——点「查看原文内容」才请求原文。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
 ## 目录结构
 
@@ -100,6 +100,8 @@ GET /api/v1/daily
 GET /api/v1/digests
 GET /api/v1/daily/{date}
 GET /api/v1/news/{news_id}
+GET /api/v1/news/{news_id}/content
+GET /api/v1/search
 GET /api/v1/github
 GET /api/v1/github?date={date}
 GET /api/v1/favorites
@@ -148,20 +150,53 @@ npm test
 - DeepSeek News：`https://api-docs.deepseek.com/news/`（官方文档站 HTML）
 - Qwen Blog RSS（Atom/`index.xml`）：`https://qwenlm.github.io/blog/index.xml`
 - Kimi Research Blog：`https://www.kimi.com/en/blog/`（官方页面 HTML）
+- Mistral AI Blog RSS：`https://mistral.ai/rss.xml`
+- Cohere Blog：`https://cohere.com/blog`（官方页面 HTML）
+- Cursor Blog：`https://cursor.com/blog`（官方页面 HTML）
 
-社区博客：
+研究来源（`source_type=research`，实验室研究而非二手报道）：
 
 - Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
+- Microsoft Research Blog RSS：`https://www.microsoft.com/en-us/research/feed/`
 
 媒体来源（`source_type=media`，同一事件去重时让位于官方源）：
 
 - TechCrunch AI RSS：`https://techcrunch.com/category/artificial-intelligence/feed/`
-- 量子位 RSS：`https://www.qbitai.com/feed`
+- Ars Technica AI RSS：`https://arstechnica.com/ai/feed/`（全站 AI 分类 Feed，进入 pipeline 前做 AI 相关性过滤）
 
+- `source_type` 只有 `official` / `research` / `media` 三种，由后端唯一决定；客户端只渲染 `官方 / 研究 / 媒体` 标签，**不根据来源名称猜类型**
+- **量子位（qbitai）已停止采集**：配置、测试与 fixture 均已删除，数据库中已有的历史新闻保持不动（`news_articles` 里的旧记录不删除，不做任何 destructive migration）
+- **本项目不使用 X / Twitter 作为新闻源**：不接 X API / Twitter API、不抓取 X 页面、不做任何预留实现
+- GitHub Trending 继续保持**独立逻辑**，不是 `NewsSource`：它是开发者信号，有自己的采集器、自己的 AI 筛选和自己的首页区块，不进入 dedupe / ranking / source_type
 - 优先使用官方 RSS / Atom，其次官方公开页面，最后稳定媒体 RSS
 - 只接入已确认可稳定公开采集的来源；没有稳定 Feed、且页面结构不适合轻量解析的来源不接入
 - HTML 来源都在 `app/collectors/html.py` 中各自独立解析，任一来源失败只影响自身
 - 机器之心未接入：服务端对所有请求（含 `robots.txt` 中声明的 sitemap 与实际文章页）统一返回同一个 3251 字节的机器人拦截页，没有可用的 RSS 或文章列表
+- **AI 相关性过滤（`app/pipelines/ai_filter.py`）**：Ars Technica 是全站 AI 分类 Feed，含非 AI 报道，因此该来源标记 `requires_ai_filter=True`，在进入 issue window / dedup / ranking 之前先用确定性关键词规则过滤；判定要求证据来自**不同关键词家族**（例如 `robot` + `robotics` 属于同一家族，只算一条证据），避免一篇机器人评测靠同义词堆叠混进来。过滤只用标题与摘要，不调用 LLM
+
+### Source Health
+
+每次 refresh 打印一张按来源对齐的表（`app/services/source_health.py`），列为**来源名 / OK-FAIL / 数量或错误类型**：
+
+```text
+Sources
+OpenAI                 OK      1193
+Anthropic              OK      11
+...
+Mistral AI             OK      86
+Cohere                 OK      22
+Microsoft Research     OK      10
+Cursor                 OK      12
+Ars Technica           OK      11
+
+Failed: Mistral AI (timeout)
+```
+
+- 成功时第三列是**该来源这次交出多少条有效条目**（collector 的 `valid`：标题 / URL / 时间齐全，Ars Technica 还要通过 AI 过滤）
+- 这一列**不是本次日报条数**：它在 issue window 过滤之前统计，所以 RSS 源的数字接近 Feed 全量（OpenAI 1193 表示 Feed 里有 1193 条，不代表当天日报有 1193 条）
+- 失败时第三列是**错误类型**（`timeout` / `http 403` / `http 404` / `http 5xx` / `dns` / `connection` / `redirect` / `empty` / `parse` / `error`），不是整段 traceback；解析类错误（页面改版）归为 `parse`
+- 有失败时表尾追加一行 `Failed: 来源（错误类型）`，便于当天就能发现某个 collector 挂了
+- `consecutive_failures` 是**每次运行内**的计数，不做持久化：这一阶段只做 refresh 日志，不做数据库 Dashboard
 - 日报不再按自然日归档，而按 **issue window** 归档：`window_start < published_at <= window_end`（左开右闭，UTC）
 - 窗口从「上一次成功日报的 cutoff」延续到「本次 refresh 时间」，所以 09-12 20:00 与 09-13 08:00 的新闻都进入 09-13 日报，09-13 08:00:01 的新闻不进入
 - 未来时间的文章一律不能进入当前日报（`window_end` 不会晚于 refresh 时间）
@@ -200,45 +235,59 @@ uv run python -m app.collectors.refresh
 
 ```text
 Sources
-OpenAI: X
-Anthropic: X
-Google DeepMind: X
-...
-量子位: X
-Candidates: X
-After dedup: X
+OpenAI              OK      1193
+Anthropic           OK      11
+Google DeepMind     OK      100
+Meta AI             OK      9
+NVIDIA              OK      18
+DeepSeek            OK      18
+Qwen                OK      44
+Kimi                OK      19
+Mistral AI          OK      86
+Cohere              OK      22
+Cursor              OK      12
+Hugging Face        OK      862
+Microsoft Research  OK      10
+TechCrunch AI       OK      20
+Ars Technica        OK      11
+Candidates: 18
+After dedup: 18
 
 Article extraction:
-Candidates: 12
-RSS full content: 3
-Web extracted: 7
+Candidates: 18
+RSS full content: 4
+Web extracted: 13
 RSS fallback: 1
 Failed: 1
-Cache hit: 4
+Rejected (low quality): 1
+Cache hit: 0
 
 Event dedup:
-Candidates: 12
-Clusters: 12
+Candidates: 18
+Clusters: 18
 Duplicates merged: 0
 
 Ranking:
-Candidates: 12
+Candidates: 18
 Top stories: 10
-Topics: 6
-Companies: 3
+Topics: 8
+Companies: 5
 
 GitHub Trending
-Fetched: X
-...
+Fetched: 14
+Parsed: 14
+AI candidates: 3
+Metadata success: 14
+Selected: 3
 
-Digest saved: 2026-09-13
-News: 12
-GitHub: 5
+Digest saved: 2026-09-15
+News: 18
+GitHub: 3
 
 Database
-Daily digests: 2
-News total: 15
-GitHub repos total: 4
+Daily digests: 1
+News total: 18
+GitHub repos total: 3
 ```
 
 GitHub 部分会打印筛选结果，默认只显示入选项目和拒绝数量：
@@ -300,7 +349,7 @@ Top Stories
 
 ```text
 importance   0.60   LLM importance_score（核心信号，但不是唯一信号）
-source       0.14   官方一手 > 社区博客 > 科技媒体
+source       0.14   官方一手 > 研究实验室 > 媒体
 recency      0.10   在 issue window 内的相对位置（越新越高）
 content      0.06   正文完整度（web / rss_full > rss_summary fallback）
 cluster      0.10   同一事件被多个来源报道时的小幅加成（有上限）
@@ -378,7 +427,7 @@ Phase 10.9 新增 `GET /api/v1/search`（见 [全局新闻搜索](#全局新闻�
 
 ### Mobile 显示
 
-首页分成三层，见 [今日日报首页](#今日日报首页phase-107)。
+首页分成两段（重点新闻 / 更多动态），见 [今日日报首页](#今日日报首页phase-107)。
 
 ### 可观察性
 
@@ -405,7 +454,7 @@ AI_DAILY_DEBUG_RANKING=1 uv run python -m app.collectors.refresh
 
 ## 今日日报首页（Phase 10.7）
 
-Phase 10.6 已经算好顺序。Phase 10.7 只把这份顺序做成一个「每天 5～10 分钟能读完」的首页，**不改采集、不改 event dedup、不改正文提取、不改 ranking 算法**。
+Phase 10.6 已经算好顺序。这个首页只把那份顺序做成一个「每天 5～10 分钟能读完」的页面，**不改采集、不改 event dedup、不改正文提取、不改 ranking 算法**。Phase 10.11 之后结构更简单：**今日 AI 日报 → 新闻列表（服务端 rank 顺序）→ GitHub Trending**。
 
 ```text
 今日 AI 日报
@@ -414,12 +463,10 @@ Phase 10.6 已经算好顺序。Phase 10.7 只把这份顺序做成一个「每�
 今日收录 12 条 AI 动态
 精选 10 条重点新闻 · 3 个来源 · 6 个话题
 
-🔥 今日必看        Top 3
-  #1 ...（大标题 + 最多 3 行摘要）
-  #2 ...
-  #3 ...
-
-⭐ 重点新闻        rank 4~10
+⭐ 重点新闻        Top 10
+  [官方] OpenAI · 2小时前
+  ...
+  [研究] Hugging Face · 5小时前
   ...
 
 📰 更多动态        rank 11+
@@ -429,21 +476,32 @@ Phase 10.6 已经算好顺序。Phase 10.7 只把这份顺序做成一个「每�
   ...
 ```
 
-### 三层分组
+### 两层分组
 
 分组完全来自后端已经返回的字段，客户端不重新排序、不重新打分：
 
 ```text
-rank 1~3     今日必看   is_top_story = true，且 rank <= 3
-rank 4~10    重点新闻   is_top_story = true
-rank 11+     更多动态   其余全部
+is_top_story = true    重点新闻
+其余                   更多动态
 ```
 
-- `is_top_story` 与 `rank` 都由后端给出，Mobile 只做切分；Top 3 的「3」是**阅读体验**上的常量（`MUST_READ_LIMIT`），与后端 `TOP_STORY_LIMIT=10` 解耦，所以调整首屏层级不需要改排序契约
-- 所有新闻都会渲染：11+ 不是丢弃，只是排在后面
+- **「今日必看」（rank 1~3）已在 Phase 10.11 删除**：不再有 `MUST_READ_LIMIT`，不再有单独的 must_read section 或对应文案。同一份 ranking 之前被展示两次，且「第 3 条」这条界带没有依据
+- `is_top_story` 与 `rank` 都由后端给出，Mobile 只做切分，**不新增第二套排序**
+- 所有新闻都会渲染：更多动态不是丢弃，只是排在后面；两段合起来读就是完整的 rank 1..N
 - 旧日报没有 `is_top_story` 时不做猜测，全部进「更多动态」，顺序保持后端返回的顺序
 - 分组与统计都在 `mobile/lib/digestSections.ts`（纯函数、可单测），不堆在 Component 里
-- 新闻详情页与原文阅读逻辑不变
+
+### 来源类型 badge
+
+每条新闻显示来源类型标签，**按后端返回的 `source_type` 渲染**，客户端**不根据来源名称猜类型**：
+
+```text
+official → 官方      research → 研究      media → 媒体
+```
+
+- 映射集中在 `mobile/lib/sourceType.ts`（纯函数、可单测），未知值不显示 badge 而不是显示错误标签
+- 采用「每条新闻一个 badge」而不是「按来源类型重新分组」：分组会破坏当前全局 ranking 的阅读体验，badge 不会
+- GitHub Trending 保持**独立区块**，它不是 `NewsSource`，没有 `source_type`
 
 ### 日报概览
 
@@ -489,7 +547,6 @@ other → （不显示）
 
 ### 空状态与异常
 
-- 今日必看不足 3 条：该 section 只显示实际条数（1~2 条），不补空位
 - 总新闻不足 10 条：重点新闻 section 自然变短或消失
 - 没有更多动态：不显示「更多动态」标题（空 section 不渲染）
 - 没有 GitHub 项目：不显示 GitHub section
@@ -502,11 +559,14 @@ Phase 10.7 让首页值得读，Phase 10.8 解决「怎么方便地看昨天、�
 
 ### 入口
 
-- Today 页面标题下方有一个「历史日报 →」入口，切到「历史」Tab
+- Phase 10.11 起，**今日首页不再提供「历史日报 →」与「搜索历史新闻」入口**（见对应小节），入口收敛到「历史」Tab
 - 「历史」Tab 列出数据库里**真实存在**的日报，按日期倒序
-- 点击任意一天进入日报页，复用 Phase 10.7 的同一套 UI（今日必看 / 重点新闻 / 更多动态 / GitHub Trending）
+- 「历史」Tab 顶部保留「搜索全部历史新闻 →」入口，进入搜索页
+- 点击任意一天进入日报页，复用今日首页的同一套 UI（重点新闻 / 更多动态 / GitHub Trending）
 
 历史列表只显示真实存在的日报，**不会为不存在的日期生成空日报**。
+
+被删掉的只是**今日首页上的两个跳转**：后端的历史日报 API（`/digests`、`/daily/{date}`）与全文搜索 API（`/search`）都原样保留，历史 Tab 与搜索页也都还在，只是不再从「今天读什么」这个页面往外分流。
 
 ### 列表内容
 
@@ -708,7 +768,7 @@ why_it_matters              2
 
 ### Mobile 搜索页
 
-入口在 Today 与「历史」页（不改 TabBar 结构），进入后是一个独立的搜索页：
+入口在「历史」页（不改 TabBar 结构）。**Phase 10.11 移除了 Today 页上的搜索入口**，搜索页本身与 `/api/v1/search` 后端能力都保留：
 
 ```text
 搜索 AI 新闻
@@ -727,7 +787,7 @@ DeepSeek 发布 V4.1
 - query 改变时旧响应不会覆盖新结果（每个请求带自己的 query，回来时如果已不是当前 query 就丢弃）
 - 没有结果：「没有找到相关内容」
 - Backend 失败：沿用「无法连接 AI Daily 服务」+「重新尝试」
-- 点击结果进入**现有** `NewsDetailScreen`，中文摘要 / Why it matters / 原语言正文 / 查看原文 / 收藏全部照旧
+- 点击结果进入**现有** `NewsDetailScreen`，中文摘要 / Why it matters / 查看原文内容 / 打开原始网页 / 收藏全部照旧
 - 本阶段不做搜索历史（不写 SQLite、不写 AsyncStorage）
 
 ## 环境隔离与维护命令安全（Phase 10.10）
@@ -912,7 +972,7 @@ FAIL  必须修复（未知 APP_ENV、不可用时区、LLM 已启用但缺少�
 - 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
 - 日报日期（`date` 主键）仍由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间（`published_at`）与窗口（`window_start` / `window_end`）统一以 UTC 保存
 - 一条新闻只属于一个窗口：`window_start < published_at <= window_end`，同一份日报的链接不会跨窗口重复
-- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段、Phase 10.6 新增的 `rank` / `rank_score` 都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
+- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段、Phase 10.6 新增的 `rank` / `rank_score`、Phase 10.11 新增的 `content_raw` 与正文字段都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
 
 存储内容：
 
@@ -953,14 +1013,14 @@ uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
 
 ```text
 日报列表                            新闻详情
-中文标题                            中文标题 / 中文摘要 / Why it matters
-中文摘要              点击          来源 · 发布时间
-Why it matters       ───────►       ────────────────────────
-importance score                    原文内容（原始语言，不翻译）
-                                    原始标题
-                                    原语言完整正文
+中文标题                            中文标题 / 原始标题
+中文摘要              点击          来源 + 来源类型 badge · 时间
+Why it matters       ───────►       中文摘要
+importance score                    Why it matters
                                     ────────────────────────
-                                    查看原文（系统浏览器打开 url）
+                                    [ 查看原文内容 ]   ← 默认不展开正文
+                                    ────────────────────────
+                                    打开原始网页（系统浏览器打开 url）
 ```
 
 **原始正文绝对不翻译、不改写**，中文摘要与原始正文是两套独立字段：
@@ -975,19 +1035,57 @@ importance_score  0-100          ┘
 
 ### 正文提取 pipeline
 
-`app/services/article_extractor.py` 是**所有来源共用**的一套提取逻辑（不是 11 个 parser），来源差异只体现在列表页怎么抓，这一点 `app/collectors/` 已经处理。正文来源按优先级：
+`app/services/article_extractor.py` 是**所有来源共用**的一套提取逻辑（不是 15 个 parser），来源差异只体现在列表页怎么抓，这一点 `app/collectors/` 已经处理。正文来源按优先级：
 
 ```text
-RSS/Atom 自带完整正文（content:encoded / Atom content，长度达标）
+RSS full（content:encoded / Atom content，长度达标）
         ↓ 否则
-抓取文章网页并清洗
-        ↓ 失败则
-RSS description / summary（最后兜底，文章不会丢）
+source-specific selector / 网页正文提取
+        ↓
+cleaning
+        ↓
+quality check（good / low / fallback，确定性规则，不用 LLM）
+        ↓ 质量不合格或抓取失败则
+RSS summary fallback（最后兜底，文章不会丢）
 ```
 
-清洗规则：保留 paragraph / heading / list / quote（heading 保留层级、列表和引用保留标记），过滤 navbar、footer、cookie 提示、推荐阅读、分享按钮、广告、script、style、菜单、侧边栏、分页、标签、作者卡片。判断只看标签名、`class`、`id` 和 `role`，不看正文文字，所以正文里提到 cookie 不会被误删；`class` / `id` 按整词匹配，避免 `nav` 命中 `navigation-with-keyboard` 这类框架类名。正文容器在移除干扰元素后取**文本最多的候选**，因为页面里的小 `<article>` 卡片常常是相关推荐而不是正文。
+网页正文提取内部再分两层：
+
+```text
+来源专用 selector（cohere / cursor / anthropic / deepseek / kimi）
+        ↓ 未命中
+通用正文提取（article / main / [role=main] / .prose / ...，取文本最多的候选）
+        ↓
+fallback
+```
+
+清洗规则：保留 paragraph / heading / list / quote / code / table（heading 保留层级、列表和引用保留标记），过滤 script、style、nav、footer、aside、form、iframe、noscript、button，以及按 `class` / `id` / `role` 命中的 nav、cookie、consent、banner、share、social、related、recommended、newsletter、subscribe、sign-in、login、ad、sidebar、author-card、comments、pagination、tags 等噪声。**判断只看标签名、`class`、`id` 和 `role`，不看正文文字**，所以正文里提到 cookie 不会被误删；`class` / `id` 按整词匹配，避免 `nav` 命中 `navigation-with-keyboard` 这类框架类名。正文容器在移除干扰元素后取**文本最多的候选**，因为页面里的小 `<article>` 卡片常常是相关推荐而不是正文。
+
+文本后处理：HTML entity decode、Unicode 空白归一、连续空格与连续空行合并、重复段落与重复标题去重、极短孤立按钮文本与明显 footer 行丢弃；不影响 heading / list / quote / code block / 数字 / benchmark / URL。
 
 正文以**规范化纯文本**保存（段落之间空行，标题/列表/引用带轻量 Markdown 标记），不保存 raw HTML。
+
+### 正文质量检测 + 两层正文
+
+`app/services/article_quality.py` 用确定性规则判断「这段文本到底是不是一篇文章」，**不调用 LLM**：
+
+| 指标 | 含义 |
+| --- | --- |
+| `chars` / `paragraphs` / `avg_paragraph_chars` | 文本量、段落数、平均段落长度 |
+| `noise_ratio` | 导航 / cookie / 分享 / footer 措辞段落占比 |
+| `duplicate_ratio` | 重复段落占比（模板重复打印自己的样子） |
+| `link_text_ratio` | 短标签段落占比（去掉标签后的菜单是什么样） |
+
+长度阈值用**有效长度**（CJK 字符按 2.5 计），所以一段 160 字的中文正文是文章，而同样长度的英文不是。判定结果是 `good` / `low` / `fallback` 三档；**网页正文质量低就自动回退 RSS summary，绝不把垃圾正文存成正式 `content_original`**。
+
+数据库保存两层正文：
+
+```text
+content_raw       从 RSS full content 或网页正文候选中取到的未完全清洗文本（诊断用，不对外返回）
+content_original  清洗 + 质量检查后给 App 展示的正文
+```
+
+两层都用既有的 `create_all` + `ALTER TABLE ADD COLUMN` 补列，旧数据库可以直接打开，不做 destructive migration。
 
 ### 完整正文与 LLM 输入分离
 
@@ -1032,33 +1130,83 @@ System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v2`，改了 pro
 
 ### Article Detail API
 
-扩展已有的 `GET /api/v1/news/{news_id}`（不新增重复 API）
+详情拆成**两个接口**，元数据与正文分开请求：
+
+```text
+GET /api/v1/news/{news_id}          元数据 + 正文状态，不含正文
+GET /api/v1/news/{news_id}/content  正文，只在用户点「查看原文内容」时请求
+```
+
+`GET /api/v1/news/{news_id}`（Phase 10.11 起不再返回正文）：
 
 ```json
 {
   "id": "rss-4aeb82da9975e2f5",
   "source": "OpenAI",
+  "source_type": "official",
   "url": "https://openai.com/index/...",
 
   "title_original": "Perplexity trusts GPT-6 Astra with end-to-end systems",
-  "content_original": "Perplexity is using ...",
-  "content_language": "en",
-  "content_extraction_method": "web",
-
   "title_cn": "……",
   "summary": "……",
   "why_it_matters": "……",
   "importance_score": 88,
+  "published_at": "...",
 
-  "published_at": "..."
+  "has_content": true,
+  "content_language": "en",
+  "content_extraction_method": "web",
+  "content_quality": "good"
 }
 ```
 
-原有字段全部保留，向后兼容。`content_original` 只在详情接口返回：日报/列表接口（`/daily`、`/daily/{date}`、`/favorites`）刻意不返回正文，避免一次下发十几篇全文。
+`GET /api/v1/news/{news_id}/content`：
+
+```json
+{
+  "news_id": "rss-4aeb82da9975e2f5",
+  "content_original": "Perplexity is using ...",
+  "content_language": "en",
+  "content_extraction_method": "web",
+  "content_quality": "good"
+}
+```
+
+语义约定：
+
+- 文章不存在 → 两个接口都返回 **404**
+- 文章存在但没有正文 → `/content` 返回 **200** + 空 `content_original`，客户端显示"没有可显示的原文"，不当成错误
+- `has_content` 只是"是否有可展示正文"的提示，不是正文长度的替代品
+- `content_raw` 是诊断字段，**任何接口都不返回**
+- 日报/列表接口（`/daily`、`/daily/{date}`、`/favorites`、`/search`）都不返回正文，避免一次下发十几篇全文
+
+拆开的好处：打开详情页只下载元数据（几百字节），读原文是一次显式请求；日报列表页、搜索结果页也不再因为正文而变重。
 
 ### Mobile 新闻详情页
 
-`mobile/screens/NewsDetailScreen.tsx` 在原有布局下方追加"原文内容"区块：分隔线 + `原文内容 · 英文原文` + 原始标题 + 原语言正文（渲染在 `mobile/lib/articleBody.ts`，纯函数、可单测，只做展示拆分，不改写正文）。英文正文保持英文，中文正文保持中文，**不提供"自动翻译全文"**。如果正文只拿到了 RSS 摘要，会明确提示未能抓取正文，而不是假装是全文。"查看原文"仍然用系统浏览器打开 `article.url`。
+`mobile/screens/NewsDetailScreen.tsx` 只展示摘要层，正文默认**不展开**：
+
+```text
+中文标题 / 原始标题
+来源 badge · 来源 · 时间
+中文摘要
+Why it matters
+────────────────────────────────
+[ 查看原文内容 ]     ← 点击才请求正文
+────────────────────────────────
+收藏
+[ 打开原始网页 ]     ← 系统浏览器打开 article.url
+```
+
+按需加载的规则集中在 `mobile/lib/newsContent.ts`（reducer + 纯函数，可单测，不渲染任何东西）：
+
+- **一次访问只请求一次**：正文在 `ready` / `empty` / `error` 之后不再重复请求，`requesting` 标记保证并发点击也只发一个请求
+- **收起不丢内容**：`collapse` 只改 `expanded`，正文留在本地，再次展开立即可见，不重新请求
+- **加载中不撒谎**：加载期间按钮文案是 `正在加载原文…`（不是"收起原文"），且按钮禁用
+- **失败可重试**：请求失败显示错误与重试入口，重试才重新发起请求
+- **两种情况分开表达**：`empty`（这篇文章没有原文）显示"没有可显示的原文"；`ready` 但 `content_extraction_method === 'rss_summary'` 显示"未能抓取正文，这里显示的是该来源提供的摘要"，**不假装是全文**
+
+正文渲染在 `mobile/lib/articleBody.ts`（纯函数、可单测，只做展示拆分，不改写正文）。英文正文保持英文，中文正文保持中文，**不提供"自动翻译全文"**。
 
 ### 历史文章 backfill
 
@@ -1077,7 +1225,9 @@ uv run python -m app.jobs.backfill_article_content --date 2026-09-12
 
 ### 已知限制
 
-- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary（其余 10 个来源可正常抓取正文）
+- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary；实测 15 个来源里只有这一个稳定失败
+- Cohere / Cursor / Anthropic / DeepSeek / Kimi 靠页面结构解析，站点改版会让对应来源的正文退回 RSS summary（采集器会明确报错，不会静默产出垃圾正文）
+- Ars Technica 是全站 AI 分类 Feed，含非 AI 报道，进入 pipeline 前用确定性关键词规则过滤（不做 LLM 分类）；过滤是保守的，可能漏掉边缘报道
 - 提取是启发式规则而非通用阅读器：个别站点结构或反爬变化时会退回 RSS summary，并在 `content_extraction_method` 与日志中标明
 - `content_language` 只做脚本判定（中/英/日/韩/俄），不做统计语言识别
 - 正文按纯文本/轻量标记保存，不保留原始 HTML 结构与图片
@@ -1085,7 +1235,7 @@ uv run python -m app.jobs.backfill_article_content --date 2026-09-12
 
 ## 跨来源事件去重
 
-同一件事常被多个来源分别报道：OpenAI 官方发布一个模型，TechCrunch 报道它，量子位再转述一次。规则去重（canonical URL、48 小时内完全相同标题）看不见这种重复，日报里就会出现三条几乎一样的新闻。
+同一件事常被多个来源分别报道：OpenAI 官方发布一个模型，TechCrunch 报道它，Ars Technica 再转述一次。规则去重（canonical URL、48 小时内完全相同标题）看不见这种重复，日报里就会出现三条几乎一样的新闻。
 
 `app/services/event_dedup.py` 在规则去重之后再加一层**保守、可解释、确定性**的事件级去重，只影响 `daily_digest_news` 关联：
 
@@ -1127,7 +1277,7 @@ body_min_with_shared_figure  = 0.45
 一个事件簇里最终保留哪条，按顺序比较：
 
 ```text
-官方一手源 > 社区一手内容（Hugging Face）> 媒体（TechCrunch / 量子位）
+官方一手源（official）> 研究实验室（research，Hugging Face / Microsoft Research）> 媒体（media，TechCrunch / Ars Technica）
 ```
 
 同类来源内依次比较：来源配置的 priority、`importance_score`、内容完整程度（摘要长度）、更早的发布时间（原始公告），最后用 news_id 兜底，所以结果永远不取决于抓取顺序。
@@ -1635,12 +1785,14 @@ GET /api/v1/refresh/status
 
 ## 数据来源现状
 
-- RSS：真实
-- GitHub Trending：真实
+- RSS / 官方页面（11 official + 2 research + 2 media，共 15 个来源）：真实，每次 refresh 逐个抓取并输出 source health
+- GitHub Trending：真实，独立的开发者信号，不是 `NewsSource`
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）
 - 自动定时：APScheduler 每日刷新 + 启动补偿（单进程内）
 - Push：不使用（产品决策，Backend 代码保留为 dormant，默认 PUSH_ENABLED=false）
+- 量子位（qbitai）：Phase 10.11 起停止采集，历史记录保留在数据库里
+- X / Twitter：不使用，也不做任何预留实现
 
 GitHub 热门项目来自官方 Trending 页面，`stars_delta` 表示页面上的 stars today，不是历史快照差值。
 

@@ -1,18 +1,14 @@
 import type { NewsItem } from '../types';
 
 /**
- * How many leading stories get the most prominent treatment.
+ * The digest's reading sections, in the order they are rendered.
  *
- * This is a reading-experience choice, not a ranking one: the server decides
- * the order and which stories are top stories (`is_top_story`, the top ten),
- * and the client only decides how much visual weight the first few get. The
- * value is deliberately separate from the server's `TOP_STORY_LIMIT` so the
- * landing page can change without touching the ranking contract.
+ * Phase 10.11 removed 今日必看: the first three stories used to be pulled into a
+ * separate "must read" tier on top of the ranking, which meant the same ranking
+ * was presented twice and the boundary at rank 3 was arbitrary. There are now
+ * two sections and one rule — the server's rank order is the reading order.
  */
-export const MUST_READ_LIMIT = 3;
-
-/** Section keys, in reading order. */
-export type DigestSectionKey = 'must_read' | 'top' | 'more';
+export type DigestSectionKey = 'top' | 'more';
 
 export type DigestSection = {
   key: DigestSectionKey;
@@ -22,13 +18,14 @@ export type DigestSection = {
 };
 
 /**
- * Split a digest into 今日必看 / 重点新闻 / 更多动态.
+ * Split a digest into 重点新闻 / 更多动态.
  *
  * The backend ranks every story and marks the leading ones with
- * `is_top_story`, so the split is a read, not a re-decision: a story the server
- * put in the top ten never moves into "more" because of something counted
- * here. Rank order is preserved (and restored if the payload ever arrives out
- * of order), so the two sections read top-down.
+ * `is_top_story`, so the split is a read of the payload rather than a second
+ * opinion: a story the server put in the top ten never moves down because of
+ * something counted here. Rank order is preserved (and restored if the payload
+ * ever arrives out of order), so both sections read top-down and the whole
+ * digest reads 1..N.
  *
  * A digest written before ranking existed has no flags at all. Then there is no
  * top story to call out, and everything goes to 更多动态 in the order given
@@ -36,25 +33,15 @@ export type DigestSection = {
  */
 export function buildDigestSections(news: NewsItem[]): DigestSection[] {
   const ranked = [...news].sort(compareByRank);
-  const marked = ranked.filter((item) => item.is_top_story === true);
+  const top = ranked.filter((item) => item.is_top_story === true);
   const more = ranked.filter((item) => item.is_top_story !== true);
-  const mustRead = marked.slice(0, MUST_READ_LIMIT);
-  const top = marked.slice(MUST_READ_LIMIT);
 
   const sections: DigestSection[] = [];
-  if (mustRead.length > 0) {
-    sections.push({
-      key: 'must_read',
-      title: '今日必看',
-      caption: `Top ${mustRead.length}`,
-      items: mustRead,
-    });
-  }
   if (top.length > 0) {
     sections.push({
       key: 'top',
       title: '重点新闻',
-      caption: `${top.length} 条`,
+      caption: `Top ${top.length}`,
       items: top,
     });
   }
