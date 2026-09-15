@@ -1,23 +1,14 @@
-import { useEffect, useReducer } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BackHeader } from '../components/BackHeader';
 import { Chip } from '../components/Chip';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
 import { useAsyncResource } from '../hooks/useAsyncResource';
-import { languageLabel, parseArticleBody } from '../lib/articleBody';
-import {
-  INITIAL_CONTENT_STATE,
-  contentButtonLabel,
-  contentEmptyMessage,
-  contentRequestNeeded,
-  contentSectionTitle,
-  newsContentReducer,
-} from '../lib/newsContent';
-import { formatTime } from '../lib/format';
+import { SUMMARY_FALLBACK, displayKeyPoints, publishedLabel } from '../lib/readingView';
 import { sourceBadgeLabel } from '../lib/sourceType';
-import { fetchNews, fetchNewsContent } from '../services/api';
+import { topicLabel } from '../lib/topics';
+import { fetchNews } from '../services/api';
 import { colors, radius, spacing, typography } from '../theme';
 
 type NewsDetailScreenProps = {
@@ -26,70 +17,43 @@ type NewsDetailScreenProps = {
 };
 
 /**
- * One article, with its original text behind a button.
+ * One article as a Chinese reading page.
  *
- * The layout is the summary first — title, source, time, 中文摘要, Why it
- * matters — and the article body only after 查看原文内容 is tapped. Phase 10.11
- * moved the body to its own request, so opening a story no longer downloads a
- * whole article: the metadata response arrives, the reader decides whether they
- * want the original, and only then is the text fetched. The body is fetched at
- * most once per visit; collapsing and re-expanding re-uses the copy in hand.
+ * Phase 10.12 removed the original-text viewer on purpose. AI Daily is a Chinese
+ * briefing about what changed in AI, not an RSS reader, so this screen shows the
+ * LLM's grounded Chinese interpretation — 发生了什么 / 核心信息 / 为什么重要 —
+ * and links out to the source for anyone who wants the article itself. The
+ * backend still stores the original body for search and re-summarising; the app
+ * simply never asks for it, which is also why opening a story costs one small
+ * request.
  */
 export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
   const { status, data, error, reload } = useAsyncResource(() => fetchNews(newsId), [newsId]);
   const notFound = status === 'error' && error?.status === 404;
-  const [content, dispatch] = useReducer(newsContentReducer, INITIAL_CONTENT_STATE);
-
-  // The reducer decides that a request is needed; the screen issues it. Keeping
-  // the decision in the reducer is what makes "never request the same body
-  // twice" a property of the state rather than of an effect's dependency list.
-  useEffect(() => {
-    if (!contentRequestNeeded(content)) {
-      return;
-    }
-    let cancelled = false;
-    dispatch({ type: 'loadStarted' });
-    fetchNewsContent(newsId)
-      .then((payload) => {
-        if (!cancelled) {
-          dispatch({ type: 'loadSucceeded', content: payload });
-        }
-      })
-      .catch((thrown: unknown) => {
-        if (!cancelled) {
-          const message =
-            thrown instanceof Error && thrown.message ? thrown.message : '原文加载失败，请稍后重试';
-          dispatch({ type: 'loadFailed', message });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [newsId, content]);
-
+  const keyPoints = data ? displayKeyPoints(data) : [];
   const badge = data ? sourceBadgeLabel(data.source_type) : null;
-  const body = parseArticleBody(content.body);
-  const emptyMessage = contentEmptyMessage(content);
+  const topic = data ? topicLabel(data.topic) : '';
+  const published = data ? publishedLabel(data.published_at) : '';
 
-  async function openOriginal() {
+  async function openSource() {
     if (!data) {
       return;
     }
     try {
       await Linking.openURL(data.url);
     } catch {
-      Alert.alert('查看原文', '这是占位链接，本阶段不访问真实页面。');
+      Alert.alert('查看来源', '这是占位链接，本阶段不访问真实页面。');
     }
   }
 
   return (
     <Screen>
-      <BackHeader title="新闻详情" onBack={onBack} />
+      <BackHeader title="AI 解读" onBack={onBack} />
       <StatusState
         loading={status === 'loading'}
         error={status === 'error' && !notFound}
         empty={notFound}
-        loadingText="正在加载新闻详情..."
+        loadingText="正在加载解读..."
         errorText={error?.message}
         emptyText="没有找到这条内容。"
         onRetry={notFound ? undefined : reload}
@@ -97,115 +61,45 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
         {data ? (
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
             <Text style={styles.title}>{data.title_cn}</Text>
-            <Text style={styles.original}>{data.title_original}</Text>
+            {data.title_original ? (
+              <Text style={styles.original}>{data.title_original}</Text>
+            ) : null}
+            {/* 来源 · 发布时间 · Topic, in that order, so the line answers
+                "who says this, when, and about what" before the reading starts. */}
             <View style={styles.metaRow}>
               {badge ? <Chip label={badge} /> : null}
               <Text style={styles.meta}>
-                {data.source}  ·  {data.published_at.slice(0, 10)} {formatTime(data.published_at)}
+                {[data.source, published, topic].filter(Boolean).join('  ·  ')}
               </Text>
             </View>
 
-            <Text style={styles.sectionLabel}>中文摘要</Text>
-            <Text style={styles.body}>{data.summary || '原文暂无摘要。'}</Text>
+            <Text style={styles.sectionLabel}>发生了什么？</Text>
+            <Text style={styles.body}>{data.summary || SUMMARY_FALLBACK}</Text>
+
+            {/* An article summarised before key_points existed has no bullets,
+                and a heading over nothing would promise information that is not
+                there, so the whole section is skipped. */}
+            {keyPoints.length ? (
+              <>
+                <Text style={styles.sectionLabel}>核心信息</Text>
+                <View style={styles.pointList}>
+                  {keyPoints.map((point, index) => (
+                    <View key={`${index}-${point}`} style={styles.pointRow}>
+                      <Text style={styles.pointBullet}>·</Text>
+                      <Text style={styles.pointText}>{point}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            ) : null}
 
             {data.why_it_matters ? (
-              <View style={styles.whyBox}>
-                <Text style={styles.sectionLabel}>为什么值得关注</Text>
-                <Text style={styles.body}>{data.why_it_matters}</Text>
-              </View>
-            ) : null}
-
-            {data.tags.length ? (
-              <View style={styles.tags}>
-                {data.tags.map((tag) => (
-                  <Chip key={tag} label={tag} />
-                ))}
-              </View>
-            ) : null}
-
-            {/*
-              The original text is opt-in. The button always exists so the reader
-              knows whether there is anything to read: 查看原文内容 before the
-              first load, 收起原文 while it is open.
-            */}
-            <Pressable
-              onPress={() => dispatch({ type: content.expanded ? 'collapse' : 'expand' })}
-              android_ripple={{ color: colors.overlay }}
-              disabled={content.status === 'loading'}
-              style={({ pressed }) => [
-                styles.originalButton,
-                pressed && styles.pressed,
-                content.status === 'loading' && styles.disabled,
-              ]}
-            >
-              {content.status === 'loading' ? (
-                <ActivityIndicator color={colors.text} size="small" />
-              ) : null}
-              <Text style={styles.originalButtonText}>{contentButtonLabel(content)}</Text>
-            </Pressable>
-
-            {content.expanded ? (
-              <View style={styles.originalSection}>
-                <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>
-                  {contentSectionTitle(languageLabel(content.language))}
-                </Text>
-
-                {content.status === 'error' ? (
-                  <View style={styles.errorBox}>
-                    <Text style={styles.errorText}>{content.error}</Text>
-                    <Pressable
-                      onPress={() => dispatch({ type: 'retry' })}
-                      style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
-                    >
-                      <Text style={styles.retryText}>重新加载原文</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-
-                {content.status === 'empty' && emptyMessage ? (
-                  <Text style={styles.notice}>{emptyMessage}</Text>
-                ) : null}
-
-                {body.length ? (
-                  <>
-                    <Text style={styles.originalTitle}>{data.title_original}</Text>
-                    {body.map((block, index) => {
-                      const key = `${block.kind}-${index}`;
-                      if (block.kind === 'heading') {
-                        return (
-                          <Text
-                            key={key}
-                            style={[styles.originalHeading, block.level <= 2 && styles.originalHeadingTop]}
-                          >
-                            {block.text}
-                          </Text>
-                        );
-                      }
-                      if (block.kind === 'list') {
-                        return (
-                          <Text key={key} style={styles.originalListItem}>
-                            · {block.text}
-                          </Text>
-                        );
-                      }
-                      if (block.kind === 'quote') {
-                        return (
-                          <Text key={key} style={styles.originalQuote}>
-                            {block.text}
-                          </Text>
-                        );
-                      }
-                      return (
-                        <Text key={key} style={styles.originalParagraph}>
-                          {block.text}
-                        </Text>
-                      );
-                    })}
-                    {emptyMessage ? <Text style={styles.notice}>{emptyMessage}</Text> : null}
-                  </>
-                ) : null}
-              </View>
+              <>
+                <Text style={styles.sectionLabel}>为什么重要？</Text>
+                <View style={styles.whyBox}>
+                  <Text style={styles.body}>{data.why_it_matters}</Text>
+                </View>
+              </>
             ) : null}
 
             <View style={styles.actions}>
@@ -213,11 +107,11 @@ export function NewsDetailScreen({ newsId, onBack }: NewsDetailScreenProps) {
             </View>
 
             <Pressable
-              onPress={openOriginal}
+              onPress={openSource}
               android_ripple={{ color: colors.overlay }}
               style={({ pressed }) => [styles.button, pressed && styles.pressed]}
             >
-              <Text style={styles.buttonText}>打开原始网页</Text>
+              <Text style={styles.buttonText}>查看来源</Text>
             </Pressable>
           </ScrollView>
         ) : null}
@@ -247,7 +141,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: spacing.sm,
-    marginBottom: spacing.lg,
   },
   meta: {
     ...typography.meta,
@@ -256,114 +149,40 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 13,
     lineHeight: 18,
+    fontWeight: '600',
     color: colors.textTertiary,
     marginBottom: spacing.sm,
+    marginTop: spacing.lg,
   },
   body: {
     ...typography.body,
     color: colors.text,
   },
-  whyBox: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.overlay,
-    borderRadius: radius.md,
-    padding: spacing.md,
+  pointList: {
+    gap: spacing.sm,
   },
-  originalButton: {
-    marginTop: spacing.lg,
+  pointRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: 14,
-  },
-  disabled: {
-    opacity: 0.7,
-  },
-  originalButtonText: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  originalSection: {
-    marginTop: spacing.lg,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginBottom: spacing.lg,
-  },
-  originalTitle: {
-    ...typography.subtitle,
-    color: colors.text,
-    marginBottom: spacing.md,
-  },
-  originalHeading: {
-    fontSize: 17,
-    lineHeight: 26,
-    fontWeight: '600',
-    color: colors.text,
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  originalHeadingTop: {
-    fontSize: 19,
-    lineHeight: 28,
-  },
-  originalParagraph: {
-    ...typography.body,
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  originalListItem: {
-    ...typography.body,
-    color: colors.text,
-    marginBottom: spacing.xs,
-    paddingLeft: spacing.xs,
-  },
-  originalQuote: {
-    ...typography.body,
-    color: colors.textSecondary,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.border,
-    paddingLeft: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  notice: {
-    ...typography.meta,
-    color: colors.textTertiary,
-    marginTop: spacing.sm,
-  },
-  errorBox: {
-    backgroundColor: colors.overlay,
-    borderRadius: radius.md,
-    padding: spacing.md,
     alignItems: 'flex-start',
-  },
-  errorText: {
-    ...typography.meta,
-    color: colors.textSecondary,
-  },
-  retry: {
-    marginTop: spacing.sm,
-  },
-  retryText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.accent,
-  },
-  tags: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
-    marginTop: spacing.lg,
+  },
+  pointBullet: {
+    ...typography.body,
+    color: colors.accent,
+    lineHeight: 26,
+  },
+  pointText: {
+    ...typography.body,
+    color: colors.text,
+    flex: 1,
+  },
+  whyBox: {
+    backgroundColor: colors.overlay,
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
   actions: {
-    marginTop: spacing.lg,
+    marginTop: spacing.xl,
   },
   button: {
     marginTop: spacing.md,

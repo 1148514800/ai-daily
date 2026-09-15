@@ -41,7 +41,9 @@ export function TodayScreen({ onOpenNews }: TodayScreenProps) {
         }
         loadingText="正在加载今日资讯..."
         errorText={error?.message}
-        emptyText="今天还没有生成日报。日报每天 08:00 自动更新，稍后再来看看。"
+        /* The home screen stays about reading: the refresh schedule now lives in
+           设置, so an empty day does not explain the scheduler here. */
+        emptyText="今天还没有生成日报，稍后再来看看。"
         onRetry={reload}
       >
         {data && view ? (
@@ -49,6 +51,8 @@ export function TodayScreen({ onOpenNews }: TodayScreenProps) {
             digest={data}
             onOpenNews={onOpenNews}
             heading={digestHeading(data.date, view.isToday)}
+            // Coming back from a story restores the position in this list.
+            scrollKey="today"
             /* "今日已读完" only makes sense for today's own digest; on a
                fallback day it would claim a reading session that did not
                happen. */

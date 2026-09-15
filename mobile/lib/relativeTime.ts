@@ -74,6 +74,21 @@ export function formatClock(date: Date): string {
   return `${pad(parts.hour)}:${pad(parts.minute)}`;
 }
 
+/**
+ * ``YYYY-MM-DD HH:MM`` in APP_TIMEZONE.
+ *
+ * The fixed-offset conversion lives here and nowhere else, so a screen that
+ * wants an unambiguous local instant (the settings status rows) does not have to
+ * repeat the offset arithmetic and risk drifting from the digest date logic.
+ */
+export function formatAppDateTime(date: Date): string {
+  const parts = appLocalParts(date);
+  return (
+    `${parts.year}-${pad(parts.month)}-${pad(parts.day)} ` +
+    `${pad(parts.hour)}:${pad(parts.minute)}`
+  );
+}
+
 function formatMonthDay(date: Date): string {
   const parts = appLocalParts(date);
   return `${parts.month}月${parts.day}日`;

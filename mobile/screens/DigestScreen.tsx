@@ -49,6 +49,9 @@ export function DigestScreen({ date, onBack, onOpenNews, onOpenDigest }: DigestS
             onOpenNews={onOpenNews}
             showFinishedHint={false}
             heading={digestHeading(date, today)}
+            // Each day is its own list, so a position saved on 09-12 cannot be
+            // restored onto 09-13.
+            scrollKey={`digest:${date}`}
             footerNav={
               <DigestNav
                 previous={neighbours?.previous ?? null}

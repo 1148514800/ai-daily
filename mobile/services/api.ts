@@ -4,7 +4,6 @@ import type {
   Favorite,
   FavoriteItemType,
   GitHubProject,
-  NewsContent,
   NewsDetail,
   NewsItem,
   RefreshStatus,
@@ -106,25 +105,12 @@ export function searchNews(
 /**
  * One article's metadata, without its body.
  *
- * The response says whether a body exists (`has_content`) and how it was
- * obtained; the text itself comes from `fetchNewsContent`, so opening a story
- * costs one small request instead of a whole article.
+ * This is the only request the detail screen makes. The backend keeps the
+ * original-language body for search and re-summarising, but the reader-facing
+ * screen is the Chinese reading view, so the body is never fetched here.
  */
 export function fetchNews(newsId: string): Promise<NewsDetail> {
   return request<NewsDetail>(`/api/v1/news/${encodeURIComponent(newsId)}`);
-}
-
-/**
- * One article's cleaned original-language body, on demand.
- *
- * Only called when the reader asks to see the original text. An article that
- * exists without a body answers 200 with an empty `content_original`, so the
- * screen can say "no original text" instead of showing an error.
- */
-export function fetchNewsContent(newsId: string): Promise<NewsContent> {
-  return request<NewsContent>(`/api/v1/news/${encodeURIComponent(newsId)}/content`, {
-    fallbackMessage: '原文加载失败',
-  });
 }
 
 export function fetchGithubProjects(date?: string): Promise<GitHubProject[]> {

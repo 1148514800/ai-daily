@@ -9,12 +9,15 @@ import {
   View,
 } from 'react-native';
 import { Screen } from '../components/Screen';
+import { useAsyncResource } from '../hooks/useAsyncResource';
 import { checkBackendHealth, validateBackendUrl } from '../lib/backendUrl';
+import { systemStatusRows } from '../lib/systemStatus';
 import {
   getApiBaseUrl,
   resetBackendUrl,
   saveBackendUrl,
 } from '../services/backendSettings';
+import { fetchRefreshStatus } from '../services/api';
 import { colors, radius, spacing, typography } from '../theme';
 
 type Feedback = { kind: 'ok' | 'error' | 'info'; text: string } | null;
@@ -23,6 +26,12 @@ export function SettingsScreen() {
   const [url, setUrl] = useState(getApiBaseUrl());
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [busy, setBusy] = useState<'idle' | 'testing' | 'saving'>('idle');
+  // The refresh status used to sit under the digest headline, where it competed
+  // with the news for attention. It moved here in Phase 10.12: the reading page
+  // shows the digest, and "is the background job healthy" is a settings question.
+  // A failed load is not an error state: the rows simply say 暂无状态信息.
+  const { data: refreshStatus } = useAsyncResource(fetchRefreshStatus);
+  const statusRows = systemStatusRows(refreshStatus);
 
   useEffect(() => {
     setUrl(getApiBaseUrl());
@@ -146,6 +155,16 @@ export function SettingsScreen() {
             本地部署阶段使用 HTTP；未来迁移到云服务器时改为 HTTPS。
           </Text>
         </View>
+
+        <Text style={styles.sectionTitle}>系统状态</Text>
+        <View style={styles.note}>
+          {statusRows.map((row) => (
+            <View key={row.key} style={styles.statusRow}>
+              <Text style={styles.statusLabel}>{row.label}</Text>
+              <Text style={styles.statusValue}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
       </ScrollView>
     </Screen>
   );
@@ -254,5 +273,27 @@ const styles = StyleSheet.create({
   noteBody: {
     ...typography.meta,
     color: colors.textSecondary,
+  },
+  sectionTitle: {
+    ...typography.subtitle,
+    color: colors.text,
+    marginTop: spacing.xl,
+    marginBottom: spacing.sm,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  statusLabel: {
+    ...typography.meta,
+    color: colors.textTertiary,
+  },
+  statusValue: {
+    ...typography.meta,
+    color: colors.textSecondary,
+    flexShrink: 1,
+    textAlign: 'right',
   },
 });

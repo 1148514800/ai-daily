@@ -58,10 +58,29 @@ def apply_enrichment(raw: RawArticle, enrichment: ArticleEnrichment) -> NewsItem
         update={
             "title_cn": enrichment.title_cn.strip(),
             "summary": enrichment.summary_cn.strip(),
+            "key_points": clean_key_points(enrichment.key_points),
             "why_it_matters": enrichment.why_it_matters.strip(),
             "importance_score": enrichment.importance_score,
         }
     )
+
+
+def clean_key_points(points: list[str]) -> list[str]:
+    """The bullets worth showing: trimmed, non-empty, deduplicated, in order.
+
+    The model is asked for 3-5 points but nothing guarantees it obeys, and a
+    blank or repeated bullet would render as an empty row on the detail screen.
+    The count is left alone: a genuine two-point article is shorter, not broken.
+    """
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for point in points or []:
+        text = str(point).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
 
 
 def _published_label(raw: RawArticle) -> str:

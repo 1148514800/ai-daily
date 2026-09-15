@@ -1,13 +1,13 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { ReactNode } from 'react';
 import type { DailyDigest, NewsItem } from '../types';
+import { useScrollRestoration } from '../hooks/useScrollRestoration';
 import { formatLongDate } from '../lib/format';
 import { buildDigestSections, summarizeDigest } from '../lib/digestSections';
 import { colors, spacing, typography } from '../theme';
 import { GitHubCard } from './GitHubCard';
 import { NewsCard } from './NewsCard';
 import { SectionHeader } from './SectionHeader';
-import { UpdateHint } from './UpdateHint';
 
 type DigestViewProps = {
   digest: DailyDigest;
@@ -22,6 +22,13 @@ type DigestViewProps = {
   footerNav?: ReactNode;
   /** Rendered just after the heading, e.g. a hint that this is not today. */
   headerNote?: ReactNode;
+  /**
+   * Identifies this list for scroll restoration. Opening a story unmounts the
+   * list, so the position is remembered per key and restored on the way back —
+   * today's digest, a specific day's digest and the favourites list each keep
+   * their own.
+   */
+  scrollKey?: string;
 };
 
 export function DigestView({
@@ -31,6 +38,7 @@ export function DigestView({
   heading,
   footerNav,
   headerNote,
+  scrollKey,
 }: DigestViewProps) {
   // The server ranks the digest and marks the leading stories, so the split
   // into 重点新闻 / 更多动态 is a read of the payload rather than a second
@@ -40,11 +48,15 @@ export function DigestView({
   const sections = buildDigestSections(digest.news);
   const overview = summarizeDigest(digest.news);
   const github = digest.github_projects ?? [];
+  // The hook still runs without a key, but never remembers anything: a caller
+  // that does not opt in gets a plain ScrollView.
+  const scroll = useScrollRestoration(scrollKey ?? '');
 
   return (
     <ScrollView
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
+      {...scroll}
     >
       <Text style={styles.date}>{formatLongDate(digest.date)}</Text>
       <Text style={styles.title}>{heading ?? digest.title}</Text>
@@ -57,7 +69,6 @@ export function DigestView({
         {overview.sources ? ` · ${overview.sources} 个来源` : ''}
         {overview.topics ? ` · ${overview.topics} 个话题` : ''}
       </Text>
-      <UpdateHint />
 
       {sections.map((section) => (
         <View key={section.key}>

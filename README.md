@@ -4,11 +4,11 @@
 
 ## 当前开发阶段
 
-Phase 10.11 - Source Quality + Digest UI Cleanup + Article Content Cleanup
+Phase 10.12 - Rich Summary + Mobile Reading Experience Optimization
 
 今日 AI 新闻来自中外官方模型厂商、研究实验室与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页是一条服务端 rank 顺序的新闻列表（**重点新闻 / 更多动态**两段，每条带 官方 / 研究 / 媒体 来源标签），可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
 
-当前阶段建立了**两层内容**：日报列表只显示中文标题 / 摘要 / Why it matters，点击进入详情后先看到标题 / 来源 / 时间 / 中文摘要 / Why it matters，正文**按需加载**——点「查看原文内容」才请求原文。原始正文永远是原文，不会被翻译或重写；中文摘要是另一个独立字段，由 LLM 严格根据正文生成。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
+AI Daily 的定位是「每天快速理解 AI 行业变化的中文简报」，**不是 RSS 阅读器**。因此详情页是 **AI 解读页**：中文标题 / 来源 / 时间 / Topic，然后是 **发生了什么？**（150~300 字详细摘要）、**核心信息**（3~5 条要点）、**为什么重要？**（100~200 字），最后是「查看来源」跳转原始网页。**用户端不再提供原文阅读功能**（Phase 10.12 删除），但原始正文仍然保存在数据库里，用于搜索、摘要重新生成、质量评估与未来的 RAG。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
 ## 目录结构
 
@@ -550,8 +550,31 @@ other → （不显示）
 - 总新闻不足 10 条：重点新闻 section 自然变短或消失
 - 没有更多动态：不显示「更多动态」标题（空 section 不渲染）
 - 没有 GitHub 项目：不显示 GitHub section
-- 空日报：显示空状态文案（日报每天 08:00 更新）
+- 空日报：显示空状态文案
 - Backend 请求失败：显示错误文案 + 「重新加载」
+
+### 首页只展示阅读相关内容（Phase 10.12）
+
+首页顶部**不再显示任何后台状态信息**：没有「最后更新时间：xxxx」，没有「每天 08:00 自动刷新」，也没有 scheduler 运行状态。这些信息全部移到**设置页的「系统状态」**（见下文），首页只保留：日期、今日 AI 日报标题、日报概览、新闻列表（重点新闻 / 更多动态）、GitHub Trending。
+
+首页是阅读界面，不是运维面板。空日报的提示也相应改成「今天还没有生成日报，稍后再来看看。」，不再解释刷新计划。
+
+### 返回首页保持滚动位置（Phase 10.12）
+
+从首页点进一篇文章、再返回时，列表**回到离开时的位置**，而不是跳到顶部。
+
+原因：push 到详情页会 unmount 列表，返回时重新 mount 一个全新的 `ScrollView`，位置自然归零。位置是**列表的属性**而不是组件实例的属性，所以保存在 `mobile/lib/scrollMemory.ts`（按 key 记录 offset，纯函数可单测）：
+
+```text
+today                 今日日报
+digest:2026-09-12     某一天的历史日报（每天各自独立）
+```
+
+- 滚回顶部意味着「下次从顶部开始」，所以顶部附近的 offset 会被记为「无需恢复」，而不是恢复到一个无意义的位置
+- 恢复用非动画的 `scrollTo`：内容异步到达，从顶部动画滚下来会看到明显跳动
+- 首次 `contentSizeChange` 时列表可能还没铺满，`scrollTo` 会被截断，因此允许**有限次**重试（`SCROLL_RESTORE_ATTEMPTS`），不做无限循环
+- 保存 offset 只在 unmount 时做一次，滚动回调不 setState，因此滑动不会触发整页重渲染
+- 位置只存在内存里：重启 App 后从今天日报顶部开始是正确默认值，不存在过期问题
 
 ## 历史日报与日期导航（Phase 10.8）
 
@@ -787,7 +810,7 @@ DeepSeek 发布 V4.1
 - query 改变时旧响应不会覆盖新结果（每个请求带自己的 query，回来时如果已不是当前 query 就丢弃）
 - 没有结果：「没有找到相关内容」
 - Backend 失败：沿用「无法连接 AI Daily 服务」+「重新尝试」
-- 点击结果进入**现有** `NewsDetailScreen`，中文摘要 / Why it matters / 查看原文内容 / 打开原始网页 / 收藏全部照旧
+- 点击结果进入**现有** `NewsDetailScreen`，即中文解读页（发生了什么 / 核心信息 / 为什么重要 / 查看来源 / 收藏）；Phase 10.12 起不再有「查看原文内容」
 - 本阶段不做搜索历史（不写 SQLite、不写 AsyncStorage）
 
 ## 环境隔离与维护命令安全（Phase 10.10）
@@ -972,7 +995,8 @@ FAIL  必须修复（未知 APP_ENV、不可用时区、LLM 已启用但缺少�
 - 相对路径始终相对 `backend/` 解析，与启动时的工作目录无关；目录不存在时会自动创建
 - 日报日期（`date` 主键）仍由 `APP_TIMEZONE` 计算，默认 `Asia/Shanghai`；采集时间（`published_at`）与窗口（`window_start` / `window_end`）统一以 UTC 保存
 - 一条新闻只属于一个窗口：`window_start < published_at <= window_end`，同一份日报的链接不会跨窗口重复
-- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段、Phase 10.6 新增的 `rank` / `rank_score`、Phase 10.11 新增的 `content_raw` 与正文字段都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
+- 本阶段不做数据库迁移系统，表结构由 `Base.metadata.create_all()` 初始化；Phase 10.2 新增的 `window_start` / `window_end`、Phase 10.5 新增的 `content_original` 等正文字段、Phase 10.6 新增的 `rank` / `rank_score`、Phase 10.11 新增的 `content_raw`、Phase 10.12 新增的 `key_points_json` 都由轻量 `ALTER TABLE ADD COLUMN` 补列，旧数据库直接打开即可使用
+- `key_points_json` 以 JSON 数组字符串保存 LLM 生成的中文要点；旧行该列为 NULL，读取时统一变成 `[]`，非字符串或损坏的值也会被丢弃而不是抛错
 
 存储内容：
 
@@ -1009,29 +1033,32 @@ uv run python -m app.jobs.rebuild_digests --dates 2026-09-12,2026-09-13
 
 ## 原始正文 + 中文摘要 + 新闻详情
 
-日报列表适合快速浏览，但用户点进一条新闻后想读的是**原文**。Phase 10.5 建立两层内容：
+Phase 10.5 建立了「日报列表 / 新闻详情」两层内容。Phase 10.12 调整了第二层的定位：详情页不再展示原文，而是展示**中文结构化解读**（发生了什么 / 核心信息 / 为什么重要 + 查看来源），因为 AI Daily 是中文简报而不是 RSS 阅读器。原始正文仍然采集、清洗、入库，只是不再面向用户展示。
 
 ```text
-日报列表                            新闻详情
+日报列表                            新闻详情（AI 解读页）
 中文标题                            中文标题 / 原始标题
-中文摘要              点击          来源 + 来源类型 badge · 时间
-Why it matters       ───────►       中文摘要
-importance score                    Why it matters
+中文摘要              点击          来源 badge · 来源 · 时间 · Topic
+Why it matters       ───────►       发生了什么？（150~300 字）
+importance score                    核心信息（3~5 条要点）
+                                    为什么重要？（100~200 字）
                                     ────────────────────────
-                                    [ 查看原文内容 ]   ← 默认不展开正文
-                                    ────────────────────────
-                                    打开原始网页（系统浏览器打开 url）
+                                    收藏
+                                    [ 查看来源 ]   ← 系统浏览器打开 url
 ```
 
-**原始正文绝对不翻译、不改写**，中文摘要与原始正文是两套独立字段：
+**原始正文绝对不翻译、不改写**，中文解读与原始正文是两套独立字段：
 
 ```text
-content_original  原始正文，英文新闻保持英文，中文新闻保持中文
+content_original  原始正文，英文新闻保持英文，中文新闻保持中文（不展示给用户）
 title_cn          中文标题        ┐
-summary           中文摘要        ├ LLM 根据正文生成，绝不回写正文
-why_it_matters    为什么值得关注  │
+summary           发生了什么      │ LLM 根据正文生成，绝不回写正文
+key_points        核心信息        │
+why_it_matters    为什么重要      │
 importance_score  0-100          ┘
 ```
+
+正文仍然保留在数据库里的原因：搜索索引需要它（Phase 10.9 的 FTS 覆盖 `content_original`），将来重新生成摘要、做质量评估、做 RAG 也都要用到。
 
 ### 正文提取 pipeline
 
@@ -1082,7 +1109,7 @@ fallback
 
 ```text
 content_raw       从 RSS full content 或网页正文候选中取到的未完全清洗文本（诊断用，不对外返回）
-content_original  清洗 + 质量检查后给 App 展示的正文
+content_original  清洗 + 质量检查后的正文（Phase 10.12 起不再展示给用户，供搜索 / 重新摘要 / 质量评估使用）
 ```
 
 两层都用既有的 `create_all` + `ALTER TABLE ADD COLUMN` 补列，旧数据库可以直接打开，不做 destructive migration。
@@ -1108,7 +1135,7 @@ LLM_CONTENT_MAX_CHARS=6000
 
 ### Grounded summary
 
-System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v2`，改了 prompt 就会让缓存失效）明确要求：
+System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v3`，改了 prompt 就会让缓存失效）明确要求：
 
 ```text
 只能使用正文中实际出现的信息
@@ -1116,9 +1143,30 @@ System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v2`，改了 pro
 不得根据模型记忆猜测或补全
 正文没有提到的内容就不要写进摘要
 正文可以是英文，但输出必须是中文
+不要夸张宣传，不要写营销式形容词
 ```
 
+Phase 10.12 把输出结构从三个字段扩到四个，目标的读者是 AI 从业者与开发者：
+
+```text
+title_cn        简洁自然的中文标题
+summary_cn      150~300 字，依次说明：谁发布 / 发布什么 / 技术或产品变化 /
+                与过去相比的区别 / 为什么值得关注
+key_points      3~5 条要点，优先提取技术指标、产品能力、开源信息、
+                发布时间或可用性、性能数据
+why_it_matters  100~200 字，解释对 AI 行业或开发者的影响
+importance_score 0~100
+```
+
+为什么 importance_score 没变：它是排序输入，Phase 10.12 不改 ranking。
+
 正文提取失败时退回 RSS summary，再退回现有 fallback；LLM 失败也不会丢文章，原文本地保存并可直接展示。
+
+`key_points` 是**新增字段**，兼容规则是「旧数据返回空数组」：
+
+- 数据库里 Phase 10.12 之前生成的摘要没有要点，读取时统一返回 `[]`，页面隐藏「核心信息」区块
+- `PROMPT_VERSION` 升到 `v3`，旧缓存 key 自然失效：**新采集**的文章会用新结构生成，缓存里的旧摘要不会被重新生成，除非那篇文章重新进入 refresh 或重新跑一次 backfill
+- 因此升级后第一天，日报里会同时存在「有要点的新文章」和「没有要点的老文章」，这是预期行为而不是 bug
 
 ### 正文 Cache
 
@@ -1134,8 +1182,10 @@ System prompt（`app/services/llm/prompts.py`，`PROMPT_VERSION=v2`，改了 pro
 
 ```text
 GET /api/v1/news/{news_id}          元数据 + 正文状态，不含正文
-GET /api/v1/news/{news_id}/content  正文，只在用户点「查看原文内容」时请求
+GET /api/v1/news/{news_id}/content  正文（Phase 10.12 起 Mobile 不再调用）
 ```
+
+第二个接口**保留在后端**：正文仍然要能被搜索、被重新摘要、被质量评估。Phase 10.12 只是让客户端不再请求它，因为 AI Daily 的用户端是中文解读页而不是阅读器。
 
 `GET /api/v1/news/{news_id}`（Phase 10.11 起不再返回正文）：
 
@@ -1149,6 +1199,7 @@ GET /api/v1/news/{news_id}/content  正文，只在用户点「查看原文内�
   "title_original": "Perplexity trusts GPT-6 Astra with end-to-end systems",
   "title_cn": "……",
   "summary": "……",
+  "key_points": ["发布方：……", "模型：……", "许可：……"],
   "why_it_matters": "……",
   "importance_score": 88,
   "published_at": "...",
@@ -1179,34 +1230,34 @@ GET /api/v1/news/{news_id}/content  正文，只在用户点「查看原文内�
 - `has_content` 只是"是否有可展示正文"的提示，不是正文长度的替代品
 - `content_raw` 是诊断字段，**任何接口都不返回**
 - 日报/列表接口（`/daily`、`/daily/{date}`、`/favorites`、`/search`）都不返回正文，避免一次下发十几篇全文
+- `key_points` 永远是数组：老数据（Phase 10.12 之前生成的摘要）没有这个字段，返回 `[]`，客户端据此隐藏「核心信息」区块
 
 拆开的好处：打开详情页只下载元数据（几百字节），读原文是一次显式请求；日报列表页、搜索结果页也不再因为正文而变重。
 
 ### Mobile 新闻详情页
 
-`mobile/screens/NewsDetailScreen.tsx` 只展示摘要层，正文默认**不展开**：
+`mobile/screens/NewsDetailScreen.tsx` 是一个**AI 解读页**，不是原文阅读器。Phase 10.12 删除了「查看原文内容」按钮、原文展开区域与正文 loading 状态，页面上只保留中文解读和一条跳转来源的出口：
 
 ```text
-中文标题 / 原始标题
-来源 badge · 来源 · 时间
-中文摘要
-Why it matters
+中文标题
+原始标题（如果有）
 ────────────────────────────────
-[ 查看原文内容 ]     ← 点击才请求正文
+来源 badge · 来源   ·   发布时间   ·   Topic
+发生了什么？          ← summary，150~300 字
+核心信息              ← key_points，3~5 条
+为什么重要？          ← why_it_matters，100~200 字
 ────────────────────────────────
 收藏
-[ 打开原始网页 ]     ← 系统浏览器打开 article.url
+[ 查看来源 ]          ← 系统浏览器打开 article.url
 ```
 
-按需加载的规则集中在 `mobile/lib/newsContent.ts`（reducer + 纯函数，可单测，不渲染任何东西）：
+规则说明：
 
-- **一次访问只请求一次**：正文在 `ready` / `empty` / `error` 之后不再重复请求，`requesting` 标记保证并发点击也只发一个请求
-- **收起不丢内容**：`collapse` 只改 `expanded`，正文留在本地，再次展开立即可见，不重新请求
-- **加载中不撒谎**：加载期间按钮文案是 `正在加载原文…`（不是"收起原文"），且按钮禁用
-- **失败可重试**：请求失败显示错误与重试入口，重试才重新发起请求
-- **两种情况分开表达**：`empty`（这篇文章没有原文）显示"没有可显示的原文"；`ready` 但 `content_extraction_method === 'rss_summary'` 显示"未能抓取正文，这里显示的是该来源提供的摘要"，**不假装是全文**
-
-正文渲染在 `mobile/lib/articleBody.ts`（纯函数、可单测，只做展示拆分，不改写正文）。英文正文保持英文，中文正文保持中文，**不提供"自动翻译全文"**。
+- **只发一个请求**：页面只调用 `GET /api/v1/news/{news_id}`，不再调用 `/content`。正文仍然存在数据库里，只是用户端不展示
+- **老数据兼容**：Phase 10.12 之前生成的摘要没有 `key_points`，此时「核心信息」区块整块隐藏，而不是显示一个空标题
+- **不展示任何全文**：`content_original`、英文全文、中文全文都不出现在详情页
+- **时间是绝对的**：详情页可能从今天的日报、历史日报或收藏进入，所以显示 `9月15日 周一 08:02` 这样的固定时间，不用「2小时前」这种在历史语境下会失真的说法
+- **要点清洗集中在 `mobile/lib/readingView.ts`**（纯函数、可单测）：去空白、去重复，并容忍后端返回 null 或非数组；发布时间也在同一个模块里格式化成 `9月15日 周一 08:02`
 
 ### 历史文章 backfill
 
@@ -1231,6 +1282,9 @@ uv run python -m app.jobs.backfill_article_content --date 2026-09-12
 - 提取是启发式规则而非通用阅读器：个别站点结构或反爬变化时会退回 RSS summary，并在 `content_extraction_method` 与日志中标明
 - `content_language` 只做脚本判定（中/英/日/韩/俄），不做统计语言识别
 - 正文按纯文本/轻量标记保存，不保留原始 HTML 结构与图片
+- `key_points` 的质量取决于模型与正文：正文很短时模型可能只给 0~2 条，短于 prompt 要求的 3 条不属于错误，页面会照实少显示
+- TechCrunch 的少数推广型文章正文本身就是宣传稿，清洗规则无法把推广文案变成技术信息（属于来源筛选问题，不是清洗问题）
+- 正文抓取失败的来源（如 OpenAI 403）生成的摘要依据的是 RSS 摘要，不如有全文时详细
 - 不提供全文翻译、embeddings、向量检索、RAG 或语义搜索
 
 ## 跨来源事件去重
@@ -1447,6 +1501,23 @@ App 请求的地址按以下优先级解析：
 - 只接受 `http://` 或 `https://` 开头的合法 URL，明显无效的地址不会保存
 - 「恢复默认地址」会清除本地保存的值，回到构建时的默认值
 - 保存后立即生效，不需要重启 App
+
+### 设置页「系统状态」（Phase 10.12）
+
+首页顶部原来的刷新信息移到了这里，数据来源仍是 `GET /api/v1/refresh/status`，**没有新增接口**：
+
+```text
+系统状态
+  自动刷新     每天 08:00
+  时区         Asia/Shanghai
+  最近刷新     2026-09-15 08:02
+  刷新状态     成功
+```
+
+- 接口失败或未加载完成时，四行都显示「暂无状态信息」，页面结构不变（不会整块消失）
+- 还没有刷新记录时，「最近刷新」显示「暂无记录」，「刷新状态」显示「尚未刷新」
+- 运行中的刷新显示「进行中」，失败的显示「失败」
+- 时间按 `APP_TIMEZONE` 换算（`mobile/lib/systemStatus.ts`，纯函数、可单测），不受手机时区影响
 
 ### 构建时默认值（可选）
 

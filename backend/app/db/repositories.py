@@ -105,6 +105,7 @@ def _news_row_fields(row: NewsArticleRow) -> dict:
         title_original=row.title_original or "",
         summary=row.summary or "",
         why_it_matters=row.why_it_matters or "",
+        key_points=_key_points(row),
         source=row.source or "",
         source_type=row.source_type or "",
         published_at=row.published_at.isoformat() if row.published_at else "",
@@ -113,6 +114,41 @@ def _news_row_fields(row: NewsArticleRow) -> dict:
         url=row.url or "",
         importance_score=row.importance_score,
     )
+
+
+def _key_points(row: NewsArticleRow) -> list[str]:
+    """The stored Chinese bullets of one article, always a list.
+
+    Stored as a JSON array string, but read defensively: a row written before
+    the column existed is NULL, and a hand-edited or truncated value must
+    degrade to "no bullets" rather than break every list the article appears in.
+    """
+    raw = getattr(row, "key_points_json", None)
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    # Only strings are accepted: a row written by the app always holds strings,
+    # so anything else means the column was edited by hand or truncated. Coercing
+    # it would silently render "None" as a bullet.
+    return [item.strip() for item in parsed if isinstance(item, str) and item.strip()]
+
+
+def key_points_json(points: list[str] | None) -> str:
+    """Serialise bullets for storage, dropping blanks and duplicates."""
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for point in points or []:
+        text = str(point).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return json.dumps(cleaned, ensure_ascii=False)
 
 
 def _body_fields(row: NewsArticleRow) -> dict:
@@ -223,6 +259,7 @@ class NewsRepository:
                         title_original=item.title_original,
                         summary=item.summary,
                         why_it_matters=item.why_it_matters,
+                        key_points_json=key_points_json(item.key_points),
                         source=item.source,
                         source_type=item.source_type,
                         published_at=published,
@@ -244,6 +281,7 @@ class NewsRepository:
                 row.title_original = item.title_original
                 row.summary = item.summary
                 row.why_it_matters = item.why_it_matters
+                row.key_points_json = key_points_json(item.key_points)
                 row.source = item.source
                 row.source_type = item.source_type
                 row.published_at = published

@@ -6,6 +6,12 @@ export type NewsItem = {
   title_original: string;
   summary: string;
   why_it_matters: string;
+  /**
+   * The short Chinese bullets behind 「核心信息」 on the detail screen. The
+   * backend always sends a list, and sends `[]` for articles summarised before
+   * the field existed, so the screen can treat "no bullets" as a normal state.
+   */
+  key_points?: string[];
   source: string;
   source_type: string;
   published_at: string;
@@ -33,12 +39,14 @@ export type NewsItem = {
 };
 
 /**
- * One article's metadata for the detail screen, deliberately *without* its body.
+ * One article for the detail screen: the list shape plus a description of the
+ * stored original-language body.
  *
- * The body used to travel with this payload, which made opening one story cost
- * as much as a page of them. Phase 10.11 made it an on-demand fetch: this type
- * says whether a body exists and how it was obtained, and `fetchNewsContent`
- * returns the text only when the reader asks for it.
+ * The body used to travel with this payload, then moved to its own endpoint in
+ * Phase 10.11. Phase 10.12 stopped the app from reading it at all: the detail
+ * screen is the Chinese reading view, so the descriptive fields below are
+ * carried for completeness but never rendered. The backend keeps the body for
+ * search, re-summarising and quality work.
  */
 export type NewsDetail = NewsItem & {
   /** True when the backend has stored a body for this article. */
@@ -48,23 +56,6 @@ export type NewsDetail = NewsItem & {
   /** How the body was obtained: rss_full / web / rss_summary / none. */
   content_extraction_method: string;
   /** The deterministic verdict on the body: good / low / fallback. */
-  content_quality: string;
-};
-
-/**
- * One article's original-language body, fetched on demand.
- *
- * Returned by `GET /api/v1/news/{id}/content`. An article that exists without a
- * stored body returns an empty `content_original` rather than a 404, so "no
- * text" and "no such article" stay distinguishable.
- */
-export type NewsContent = {
-  news_id: string;
-  /** The article as published, in its original language. Never translated. */
-  content_original: string;
-  /** BCP-47-ish code for the body, e.g. "en" / "zh". Empty if unknown. */
-  content_language: string;
-  content_extraction_method: string;
   content_quality: string;
 };
 
@@ -113,8 +104,8 @@ export type DigestSummary = {
 };
 
 /**
- * One search hit. Deliberately has no article body: the list stays light and
- * the full original text is fetched from `GET /api/v1/news/{id}/content` on tap.
+ * One search hit. Deliberately has no article body: the list stays light, and
+ * tapping a result opens the Chinese reading view for that article.
  */
 export type SearchResultItem = {
   news_id: string;

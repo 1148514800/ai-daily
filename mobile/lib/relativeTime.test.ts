@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   appLocalDate,
+  formatAppDateTime,
   formatClock,
   formatRelativeTime,
   isTodayInAppTimezone,
@@ -120,4 +121,29 @@ test('isTodayInAppTimezone compares in APP_TIMEZONE, not the device zone', () =>
 
 test('isTodayInAppTimezone rejects an empty date', () => {
   assert.equal(isTodayInAppTimezone('', new Date('2026-09-13T02:00:00Z')), false);
+});
+
+test('formatAppDateTime renders a full APP_TIMEZONE instant', () => {
+  // 2026-09-15T00:02:11Z is 08:02 in Asia/Shanghai.
+  assert.equal(formatAppDateTime(new Date('2026-09-15T00:02:11Z')), '2026-09-15 08:02');
+});
+
+test('formatAppDateTime crosses the date boundary with the offset', () => {
+  assert.equal(formatAppDateTime(new Date('2026-09-14T17:30:00Z')), '2026-09-15 01:30');
+});
+
+test('formatAppDateTime pads single digits', () => {
+  assert.equal(formatAppDateTime(new Date('2026-01-02T01:02:00Z')), '2026-01-02 09:02');
+});
+
+test('formatAppDateTime and appLocalDate agree on the day', () => {
+  const instant = new Date('2026-09-14T17:30:00Z');
+
+  assert.equal(formatAppDateTime(instant).slice(0, 10), appLocalDate(instant));
+});
+
+test('formatAppDateTime pads the clock the same way formatClock does', () => {
+  const instant = new Date('2026-09-15T00:02:11Z');
+
+  assert.ok(formatAppDateTime(instant).endsWith(formatClock(instant)));
 });

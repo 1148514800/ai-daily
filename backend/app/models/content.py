@@ -16,6 +16,10 @@ class NewsItem(BaseModel):
     title_original: str
     summary: str
     why_it_matters: str
+    # The short Chinese bullets shown under 「核心信息」 on the detail screen.
+    # Empty for an article enriched before the field existed (the API contract is
+    # a list either way, so the client never has to special-case a missing key).
+    key_points: list[str] = Field(default_factory=list)
     source: str
     source_type: str
     published_at: str

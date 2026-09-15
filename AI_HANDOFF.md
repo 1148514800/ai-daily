@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.11 - Source Quality + Digest UI Cleanup + Article Content Cleanup
+Current Phase: Phase 10.12 - Rich Summary + Mobile Reading Experience Optimization
 
 Completed:
 - 项目初始化
@@ -48,6 +48,12 @@ Completed:
 - 正文按需加载：详情 API 不再返回正文，新增 GET /api/v1/news/{news_id}/content；Mobile 点击「查看原文内容」才请求（Phase 10.11）
 - 日报首页减法：删除「今日必看」三层结构（改回重点新闻 / 更多动态两段），删除今日首页的历史日报与搜索入口（Phase 10.11）
 - Source Health：refresh 打印按来源对齐的成功 / 失败 / 条数 / 错误类型表（app/services/source_health.py）（Phase 10.11）
+- LLM 摘要结构升级：新增 key_points（3~5 条中文要点），summary 扩到 150~300 字、why_it_matters 扩到 100~200 字，PROMPT_VERSION 升到 v3（Phase 10.12）
+- news_articles 新增 key_points_json（JSON 数组字符串）；旧行 NULL 读回 []，非字符串 / 损坏值丢弃，不做 destructive migration（Phase 10.12）
+- 删除用户端原文阅读功能：Mobile 不再调用 GET /api/v1/news/{id}/content，删除「查看原文内容」按钮 / 原文区域 / 正文 loading 状态 / newsContent reducer / articleBody 渲染（Phase 10.12）
+- 详情页改为 AI 解读页：发生了什么？/ 核心信息 / 为什么重要？/ 查看来源，只发一个请求（GET /api/v1/news/{id}）（Phase 10.12）
+- 首页删除后台状态信息（「最后更新」与「每天 08:00 自动刷新」），改到设置页「系统状态」区块，复用 GET /api/v1/refresh/status，未新增接口（Phase 10.12）
+- 返回列表保持滚动位置：mobile/lib/scrollMemory.ts（按 key 记录 offset）+ hooks/useScrollRestoration.ts，today 与每天的历史日报各记一份（Phase 10.12）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -55,8 +61,8 @@ Current Architecture:
 - 来源配置（app/config/sources.py）：15 个来源，`source_type` 只有 official / research / media 三种，priority 只在同一 type 内排序（official 10~30 / research 60~70 / media 120~130）；`requires_ai_filter` 标记需要在进入 pipeline 前做 AI 相关性过滤的来源
 - 来源 -> Collector（RSS 或官方页面 HTML）-> optional AI filter -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> ranking -> daily_digest_news
 - 来源 UI 只有一层：Mobile 按后端返回的 `source_type` 渲染 官方 / 研究 / 媒体 badge，不按来源名称猜类型，也不按类型重新分组（保证 ranking 阅读体验不变）
-- 两层内容：列表只有中文标题 / 摘要 / Why it matters / importance_score（NewsItem，正文字段 exclude）；详情（NewsDetail）也不含正文，只给 `has_content` / `content_language` / `content_extraction_method` / `content_quality`
-- 正文按需加载：正文只从 `GET /api/v1/news/{news_id}/content`（NewsContent：news_id / content_original / content_language / content_extraction_method / content_quality）返回；文章不存在 404，文章存在但没有正文返回 200 + 空正文
+- 两层内容：列表只有中文标题 / 摘要 / key_points / Why it matters / importance_score（NewsItem，正文字段 exclude）；详情（NewsDetail）也不含正文，只给 `has_content` / `content_language` / `content_extraction_method` / `content_quality`
+- 正文接口保留但用户端不再调用：正文仍能从 `GET /api/v1/news/{news_id}/content`（NewsContent：news_id / content_original / content_language / content_extraction_method / content_quality）取出，语义未变（文章不存在 404，文章存在但没有正文返回 200 + 空正文）；Phase 10.12 只是 Mobile 不再请求它
 - 正文提取（app/services/article_extractor.py）：所有来源共用一套 pipeline，不做 15 个 parser
 - 正文来源优先级：RSS/Atom 自带完整正文（content:encoded / Atom content，长度 >= rss_full_min_chars）-> 抓取文章网页并清洗 -> RSS description / summary 兜底
 - 正文清洗：保留 paragraph / heading / list / quote / code / table（带轻量标记），过滤 script / style / nav / footer / aside / form / iframe / noscript / button，以及按 class / id / role 命中的 nav / cookie / consent / banner / share / social / related / recommended / relevant（相关推荐模块）/ newsletter / subscribe / sign-in / login / ad / sidebar / author-card / comments / pagination / tags / affiliate / disclaimer（站点声明块）等噪声
@@ -64,16 +70,23 @@ Current Architecture:
 - 正文容器在移除干扰元素后取文本最多的候选，避免选中页面里的相关推荐小 <article> 卡片；来源专用 selector（cohere / cursor / anthropic / deepseek / kimi）优先于通用提取
 - 文本后处理包含重复段落 / 重复标题去重（_drop_duplicate_blocks），避免站点模板把同一段打印多次
 - 正文质量检测（app/services/article_quality.py）：确定性规则看 chars / paragraphs / avg_paragraph_chars / noise_ratio / duplicate_ratio / link_text_ratio，长度用有效长度（CJK 字符按 2.5 计），输出 good / low / fallback；网页正文判为 low 就回退 RSS summary，绝不把垃圾正文存成正式 content_original
-- 两层正文：news_articles.content_raw 保存未完全清洗的原始候选（诊断用，任何接口都不返回），content_original 是清洗 + 质量检查后给 App 展示的正文；两层都走 create_all + ALTER TABLE ADD COLUMN，旧库直接可用
-- 正文语言：content_original 永远保持原语言，绝不翻译/改写；title_cn / summary / why_it_matters / importance_score 是另一组独立字段
+- 两层正文：news_articles.content_raw 保存未完全清洗的原始候选（诊断用，任何接口都不返回），content_original 是清洗 + 质量检查后的正文；Phase 10.12 起 content_original 不再展示给用户，供搜索索引 / 重新生成摘要 / 质量评估使用；两层都走 create_all + ALTER TABLE ADD COLUMN，旧库直接可用
+- 正文语言：content_original 永远保持原语言，绝不翻译/改写；title_cn / summary / key_points / why_it_matters / importance_score 是另一组独立字段
 - 数据库保存完整正文 content_original；送给 LLM 的只是按 LLM_CONTENT_MAX_CHARS（默认 6000）裁剪的视图，上限集中在 app/services/llm/settings.py
 - 正文缓存以 canonical URL 为 key（backend/.cache/articles，可用 ARTICLE_CACHE_DIR 覆盖）；只缓存成功结果，失败会在下次 refresh 重试
 - 网络容错：timeout / User-Agent / redirect 上限，非 2xx、非 HTML、空正文都回退 RSS 摘要，单篇异常隔离，一个页面失败不会让 refresh 失败
 - Grounded summary：prompt 只允许使用正文事实，禁止补充正文之外的事实/数字/人名，禁止根据模型记忆猜测；正文可以是英文但输出必须是中文
-- LLM 调用输入变化（v2）：body + title + source + published_at；PROMPT_VERSION 升为 v2，缓存 key 用 content（无正文时用 summary），prompt 变化会自然失效旧缓存
+- LLM 调用输入变化（v3）：body + title + source + published_at；PROMPT_VERSION 升为 v3，缓存 key 用 content（无正文时用 summary），prompt 变化会自然失效旧缓存
+- LLM 输出结构（v3）：title_cn / summary_cn（150~300 字，交代谁发布 / 发布什么 / 技术变化 / 与过去的区别 / 为什么值得关注）/ key_points（3~5 条，优先技术指标、产品能力、开源信息、发布时间、性能数据）/ why_it_matters（100~200 字）/ importance_score；prompt 明确禁止夸张宣传与营销式形容词，并禁止「改变整个 AI 行业」这类无依据判断
+- key_points 兼容：ArticleEnrichment.key_points 默认 []，并把显式 null 归一化为 []；DB 存 key_points_json，旧行 NULL / 非字符串 / 损坏值读回 []，API 永远返回数组（老数据 → 空数组 → 详情页隐藏「核心信息」区块）
+- key_points 清洗在 app/services/llm/enrich.py 的 clean_key_points：trim、去空、去重、保序，但不补齐条数（正文很短时给 2 条是正常结果，不是错误）
 - 详情拆成两个接口：GET /api/v1/news/{news_id} 返回元数据 + 正文状态（不再返回正文），GET /api/v1/news/{news_id}/content 返回正文；/daily、/daily/{date}、/favorites、/search 都不返回正文，避免列表下发全文
-- Mobile NewsDetailScreen 布局：中文标题 / 原始标题 / 来源 badge · 来源 · 时间 / 中文摘要 / Why it matters，然后「查看原文内容」按钮（默认不展开），最后收藏与「打开原始网页」独立按钮
-- 正文按需加载的状态机在 mobile/lib/newsContent.ts（纯函数 + reducer，可单测）：一次访问只请求一次、收起不丢内容、加载中文案是「正在加载原文…」、失败可重试、empty 与 rss_summary 分别给不同提示；渲染拆分在 mobile/lib/articleBody.ts；不提供自动翻译全文
+- Mobile NewsDetailScreen 是 AI 解读页（Phase 10.12）：中文标题 / 原始标题 / 来源 badge · 来源 · 发布时间 · Topic / 发生了什么？（summary）/ 核心信息（key_points，无要点时整块隐藏）/ 为什么重要？（why_it_matters）/ 收藏 / 「查看来源」；**只调用 GET /api/v1/news/{news_id}**，不调用 /content，页面不出现任何全文
+- 详情页时间用绝对时间（9月15日 周一 08:02）：详情可能从今天日报、历史日报或收藏进入，相对时间在历史语境下会失真
+- 要点展示清洗在 mobile/lib/readingView.ts（纯函数 + 单测）：trim、去空、去重，并容忍后端返回 null 或非数组
+- 已删除的 Mobile 模块：lib/newsContent.ts（正文状态机）、lib/articleBody.ts（正文渲染拆分）、components/UpdateHint.tsx（首页「最后更新」）及其测试
+- 首页不再显示任何后台状态信息（最后更新时间 / 每天 08:00 自动刷新 / scheduler 状态），这些信息移到设置页「系统状态」区块，仍然只用 GET /api/v1/refresh/status，未新增接口；状态取不到时四行都显示「暂无状态信息」，区块不会消失（mobile/lib/systemStatus.ts，纯函数 + 单测）
+- 列表滚动位置恢复：mobile/lib/scrollMemory.ts 按 key 记录 offset（today / digest:YYYY-MM-DD 各一份），hooks/useScrollRestoration.ts 在 mount 时用非动画 scrollTo 恢复、在 contentSizeChange 时有限次重试、在 unmount 时保存；只存内存，不跨 App 重启
 - 历史正文 backfill：uv run python -m app.jobs.backfill_article_content（--limit / --date），可中断、可重复、已提取跳过、单篇失败继续，不重建日报、不改 digest 关联
 - 可观察性：refresh 打印 Article extraction 汇总（Candidates / RSS full content / Web extracted / RSS fallback / Failed / Cache hit）；AI_DAILY_DEBUG_EXTRACTION=1 打印每篇 method 与字符数，绝不打印正文
 - Source Health：refresh 打印按来源对齐的表（来源名 / OK-FAIL / collector 的 valid 条数或错误类型），失败时表尾追加 Failed 行；数量在 issue window 过滤**之前**统计，所以 RSS 源接近 Feed 全量、不等于当日日报条数；错误类型是分类结果（timeout / http 403 / dns / connection / redirect / empty / parse / error）而不是 traceback，consecutive_failures 只在单次运行内计数，不做持久化
@@ -154,6 +167,18 @@ Push（产品决策，不是缺陷）:
 
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
+
+Not in scope（Phase 10.12）:
+- 未删除后端正文能力：content_original / content_raw / GET /api/v1/news/{id}/content / backfill 命令全部保留，只删除了用户端入口
+- 未改采集、event dedup、ranking、issue window、日报生成：本阶段只改 LLM 输出结构、详情页展示与首页/设置页的信息层级
+- 未改 importance_score 语义与取值区间：它是排序输入，ranking 不在本阶段范围内
+- 未接入 X / Twitter，未做任何预留实现
+- 未引入 LLM 分类、embeddings、RAG、语义搜索、向量库、多 Agent
+- 未做数据库迁移框架：key_points_json 走既有的 create_all + ALTER TABLE ADD COLUMN
+- 未重新生成历史摘要：老文章没有 key_points 时正常显示空数组（详情页隐藏「核心信息」），需要时会重新进入 refresh 或跑 backfill
+- 未新增任何接口：设置页「系统状态」复用 GET /api/v1/refresh/status
+- 未做滚动位置的持久化（不写 AsyncStorage / SQLite），只存进程内存
+- 未改 Mobile Push 状态：仍然完全不发系统通知
 
 Not in scope（Phase 10.11）:
 - 未接入 X / Twitter：不接 X API / Twitter API、不抓 X 页面、不做任何预留实现

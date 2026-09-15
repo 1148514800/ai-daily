@@ -20,6 +20,10 @@ class NewsArticleRow(Base):
     title_original: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     why_it_matters: Mapped[str] = mapped_column(Text, default="")
+    # The LLM's short bullet points for the detail page, stored as a JSON array
+    # string so the column stays simple text and the API contract stays a list.
+    # Rows written before the field existed read back as NULL and become [].
+    key_points_json: Mapped[str] = mapped_column(Text, default="[]")
     source: Mapped[str] = mapped_column(String(128), default="")
     source_type: Mapped[str] = mapped_column(String(64), default="")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
