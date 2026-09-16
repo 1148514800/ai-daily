@@ -2,11 +2,10 @@ import { StyleSheet, Text } from 'react-native';
 import { DigestView } from '../components/DigestView';
 import { Screen } from '../components/Screen';
 import { StatusState } from '../components/StatusState';
-import { useAsyncResource } from '../hooks/useAsyncResource';
+import { useTodayDigest } from '../hooks/useTodayDigest';
 import { digestHeading, resolveTodayView } from '../lib/digestHistory';
 import { formatShortDate } from '../lib/format';
 import { appLocalDate } from '../lib/relativeTime';
-import { fetchTodayDaily } from '../services/api';
 import { colors, spacing } from '../theme';
 
 type TodayScreenProps = {
@@ -20,9 +19,13 @@ type TodayScreenProps = {
  * capabilities still exist on the backend and still have their own places in the
  * app (the 历史 tab and its search entry), but the daily read is no longer
  * interrupted by two links out.
+ *
+ * The digest is read through the in-memory cache rather than fetched flat, so
+ * coming back from a story re-renders the list the reader left instead of
+ * waiting for it again.
  */
 export function TodayScreen({ onOpenNews }: TodayScreenProps) {
-  const { status, data, error, reload } = useAsyncResource(fetchTodayDaily);
+  const { status, data, error, reload } = useTodayDigest();
   // /daily already resolves "today's digest, or the latest one when today has
   // not been generated yet". The view only decides how to label the result, so
   // the app never has to invent a digest for a day that was not generated.

@@ -54,6 +54,8 @@ Completed:
 - 详情页改为 AI 解读页：发生了什么？/ 核心信息 / 为什么重要？/ 查看来源，只发一个请求（GET /api/v1/news/{id}）（Phase 10.12）
 - 首页删除后台状态信息（「最后更新」与「每天 08:00 自动刷新」），改到设置页「系统状态」区块，复用 GET /api/v1/refresh/status，未新增接口（Phase 10.12）
 - 返回列表保持滚动位置：mobile/lib/scrollMemory.ts（按 key 记录 offset）+ hooks/useScrollRestoration.ts，today 与每天的历史日报各记一份（Phase 10.12）
+- 返回首页不再闪 loading：mobile/lib/todayCache.ts（单个 slot 保存当天日报 + 记录「哪一天已经问过」）+ hooks/useTodayDigest.ts；今日首页命中缓存时直接进 success，不发请求也不出现「正在加载今日资讯...」，TodayScreen 除替换 hook 外未改 UI（Phase 10.12）
+- 今日缓存只在缓存日期过期（App 跨过午夜）时才后台静默刷新：刷新失败继续展示缓存、不显示错误页；刷新成功后自动替换为新日报；未缓存（首次启动）仍正常显示 loading，失败仍显示错误 + 重试（Phase 10.12）
 
 Current Architecture:
 - Expo + React Native + TypeScript
@@ -178,6 +180,7 @@ Not in scope（Phase 10.12）:
 - 未重新生成历史摘要：老文章没有 key_points 时正常显示空数组（详情页隐藏「核心信息」），需要时会重新进入 refresh 或跑 backfill
 - 未新增任何接口：设置页「系统状态」复用 GET /api/v1/refresh/status
 - 未做滚动位置的持久化（不写 AsyncStorage / SQLite），只存进程内存
+- 首页缓存同样只存进程内存（不写磁盘、不做 stale-while-revalidate 时间窗、不引入 Redux / React Query）；刷新只发生在缓存所属日期已过期时，且失败不影响已展示内容
 - 未改 Mobile Push 状态：仍然完全不发系统通知
 
 Not in scope（Phase 10.11）:
