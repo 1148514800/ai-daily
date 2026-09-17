@@ -91,6 +91,32 @@ AI_STRONG = (
     "fine-tuning",
     "diffusion model",
     "transformer model",
+    # --- Chinese AI brands (Phase 10.13) ---
+    #
+    # Each of these names a model or product rather than a company, which is the
+    # line that matters here: 百度, 腾讯 and 字节 publish plenty of news that has
+    # nothing to do with AI, so those company names are deliberately absent from
+    # both lists and can never admit a story on their own.
+    "doubao",
+    "豆包",
+    "bytedance seed",
+    "seedance",
+    "seedream",
+    "hunyuan",
+    "腾讯混元",
+    "混元",
+    "ernie",
+    "文心",
+    "文心大模型",
+    "文心一言",
+    "glm",
+    "chatglm",
+    "智谱",
+    "zhipu",
+    "autoglm",
+    "minimax",
+    "hailuo",
+    "海螺",
 )
 
 # Terms that suggest AI but also occur outside it. They only count together with
@@ -149,8 +175,15 @@ WEAK_FAMILY_OF: dict[str, str] = {
 
 
 def _pattern(term: str) -> re.Pattern[str]:
-    """Whole-word/phrase matcher; terms are literal, so they are escaped."""
-    return re.compile(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])")
+    """Whole-word/phrase matcher; terms are literal, so they are escaped.
+
+    The boundaries stop a term matching inside a longer *word* (``glm`` must not
+    fire inside ``glimmer``), but a trailing digit is allowed through, because
+    that is how models are versioned: ``Hunyuan3D``, ``混元3D``, ``GLM4`` and
+    ``Gemini2.5`` are the same signal as the plain name. The leading boundary
+    stays strict, so ``said`` and ``email`` still cannot produce ``ai``.
+    """
+    return re.compile(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z])")
 
 
 STRONG_PATTERNS = tuple((term, _pattern(term)) for term in AI_STRONG)

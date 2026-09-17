@@ -232,6 +232,25 @@ EMPTY_HTML = {
         "<a class=\"blog-directory__row\" href=\"/blog/placeholder\">Placeholder</a>"
         "</div></body></html>"
     ),
+    # Phase 10.13's four HTML sources. Each keeps the exact structure its own
+    # extractor insists on, because an extractor that cannot find its marker
+    # reports a changed page: a source that is merely unpublished has to be
+    # distinguishable from one whose markup moved.
+    "bytedance-seed": (
+        "<html><body><script>window._ROUTER_DATA = "
+        "{\"loaderData\": {\"(locale$)/blog/page\": {\"article_list\": [], "
+        "\"has_more\": false, \"total\": 0}}}</script></body></html>"
+    ),
+    "tencent-hunyuan": (
+        "{\"code\": 0, \"msg\": \"success\", \"data\": {\"totalNum\": 0, \"list\": []}}"
+    ),
+    "zhipu-glm": (
+        "<html><body><script>self.__next_f.push([1,\"19:[\\\"$\\\",\\\"$L16\\\",null,"
+        "{\\\"newsItems\\\":[]}]]\\n\"])</script></body></html>"
+    ),
+    # A listing link with no date: the extractor returns zero entries rather
+    # than reporting the page as changed.
+    "minimax": "<html><body><a href=\"/blog/placeholder\"><h3>Placeholder</h3></a></body></html>",
 }
 
 DEEPSEEK_SOURCE_ID = "deepseek"
@@ -478,6 +497,10 @@ def patch_rss_feeds(monkeypatch: pytest.MonkeyPatch, openai_rss_xml: str, deepmi
     # HTML sources go through their own fetch function, so patching only the RSS
     # one would let the Anthropic / DeepSeek / Kimi tests reach the network.
     monkeypatch.setattr("app.collectors.html.fetch_html", fetch)
+    # 腾讯混元's listing is a POST-only JSON endpoint rather than a page, so it
+    # has its own fetcher; without this one the suite would reach the network
+    # for that source alone and collect live articles into the fixtures.
+    monkeypatch.setattr("app.collectors.html.fetch_hunyuan_listing", fetch)
     monkeypatch.setattr("app.services.digest_store.now_utc", lambda: FROZEN_NOW)
     monkeypatch.setattr("app.services.refresh_service.now_utc", lambda: FROZEN_NOW, raising=False)
     return fetch

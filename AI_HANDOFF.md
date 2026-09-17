@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.12 - Rich Summary + Mobile Reading Experience Optimization
+Current Phase: Phase 10.13 - First-party AI sources + media curation
 
 Completed:
 - 项目初始化
@@ -56,12 +56,20 @@ Completed:
 - 返回列表保持滚动位置：mobile/lib/scrollMemory.ts（按 key 记录 offset）+ hooks/useScrollRestoration.ts，today 与每天的历史日报各记一份（Phase 10.12）
 - 返回首页不再闪 loading：mobile/lib/todayCache.ts（单个 slot 保存当天日报 + 记录「哪一天已经问过」）+ hooks/useTodayDigest.ts；今日首页命中缓存时直接进 success，不发请求也不出现「正在加载今日资讯...」，TodayScreen 除替换 hook 外未改 UI（Phase 10.12）
 - 今日缓存只在缓存日期过期（App 跨过午夜）时才后台静默刷新：刷新失败继续展示缓存、不显示错误页；刷新成功后自动替换为新日报；未缓存（首次启动）仍正常显示 loading，失败仍显示错误 + 重试（Phase 10.12）
+- 新增 5 个国内 AI 官方一手来源（ByteDance Seed / 豆包、腾讯混元、百度文心、智谱 GLM、MiniMax），全部 source_type=official，共 20 个来源（16 official + 2 research + 2 media）；每个来源一个独立 extractor，不写"万能中国网站解析器"（Phase 10.13）
+- 五个来源的采集方式各不相同：ByteDance Seed 读页面内嵌 window._ROUTER_DATA JSON；腾讯混元读官方公开 JSON 接口（POST，唯一非文档型来源，走自己的 fetch_hunyuan_listing）；百度文心是 Hugo 原生 RSS，靠新增的 NewsSource.base_url 把站内相对链接补成绝对 URL；智谱 GLM 读 RSC flight payload 的 newsItems；MiniMax 读服务端渲染的 /blog/ 卡片（Phase 10.13）
+- AI 相关性过滤补入国内品牌强信号（doubao/豆包/seedance/seedream、hunyuan/混元、ernie/文心、glm/chatglm/智谱/zhipu/autoglm、minimax/hailuo/海螺）；命中的是模型/产品名而非公司名，百度/腾讯/字节不在任何词表里（Phase 10.13）
+- 关键词边界从 (?![a-z0-9]) 放宽为 (?![a-z])，让 Hunyuan3D / 混元3D / GLM4 / Gemini2.5 这类带版本号的模型名能命中；前边界仍严格，said / email 不会命中 ai（Phase 10.13）
+- 来源等级强化：SOURCE_TYPE_RANKS 由 {official 1.0, research 0.6, media 0.35} 改为 {official 1.0, research 0.55, media 0.15}，source_weight 由 0.14 提到 0.20（差额来自 recency 0.10→0.08、content 0.06→0.05、cluster 0.10→0.06）；跨越 official 与 media 的整档差距约 17 分，仍然只是权重不是硬排序（Phase 10.13）
+- 媒体精选层（app/services/media_selection.py）：事件去重之后、最终 ranking 之前，只对 source_type=media 生效的三条规则 —— min_importance=60、max_total=5、max_per_source=2；importance_score 为 None 的媒体文章不进入日报；official / research 完全不受这三条限制（Phase 10.13）
+- 媒体精选不删除任何数据：被筛掉的文章照样写入 news_articles（仍可搜索、仍可被以后的 refresh 或 rebuild 选中），只是不建立当天日报关联；历史日报不被重写，规则只影响后续 refresh（Phase 10.13）
+- 阈值集中在 MediaSelectionSettings（可注入），裁剪逻辑不写在 DigestStore.persist() 内；refresh 默认只多一行 media selection 汇总，AI_DAILY_DEBUG_MEDIA_SELECTION=1 逐条打印 KEEP / DROP 与原因（Phase 10.13）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- 来源配置（app/config/sources.py）：15 个来源，`source_type` 只有 official / research / media 三种，priority 只在同一 type 内排序（official 10~30 / research 60~70 / media 120~130）；`requires_ai_filter` 标记需要在进入 pipeline 前做 AI 相关性过滤的来源
-- 来源 -> Collector（RSS 或官方页面 HTML）-> optional AI filter -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> ranking -> daily_digest_news
+- 来源配置（app/config/sources.py）：20 个来源，`source_type` 只有 official / research / media 三种，priority 只在同一 type 内排序（official 10~40 / research 60~70 / media 120~130）；`requires_ai_filter` 标记需要在进入 pipeline 前做 AI 相关性过滤的来源；`base_url` 只用于补全站内相对链接（Hugo Feed），不是第二个抓取地址
+- 来源 -> Collector（RSS / 官方页面 HTML / 官方 JSON 接口）-> optional AI filter -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> media selection -> ranking -> daily_digest_news
 - 来源 UI 只有一层：Mobile 按后端返回的 `source_type` 渲染 官方 / 研究 / 媒体 badge，不按来源名称猜类型，也不按类型重新分组（保证 ranking 阅读体验不变）
 - 两层内容：列表只有中文标题 / 摘要 / key_points / Why it matters / importance_score（NewsItem，正文字段 exclude）；详情（NewsDetail）也不含正文，只给 `has_content` / `content_language` / `content_extraction_method` / `content_quality`
 - 正文接口保留但用户端不再调用：正文仍能从 `GET /api/v1/news/{news_id}/content`（NewsContent：news_id / content_original / content_language / content_extraction_method / content_quality）取出，语义未变（文章不存在 404，文章存在但没有正文返回 200 + 空正文）；Phase 10.12 只是 Mobile 不再请求它
@@ -93,7 +101,14 @@ Current Architecture:
 - 可观察性：refresh 打印 Article extraction 汇总（Candidates / RSS full content / Web extracted / RSS fallback / Failed / Cache hit）；AI_DAILY_DEBUG_EXTRACTION=1 打印每篇 method 与字符数，绝不打印正文
 - Source Health：refresh 打印按来源对齐的表（来源名 / OK-FAIL / collector 的 valid 条数或错误类型），失败时表尾追加 Failed 行；数量在 issue window 过滤**之前**统计，所以 RSS 源接近 Feed 全量、不等于当日日报条数；错误类型是分类结果（timeout / http 403 / dns / connection / redirect / empty / parse / error）而不是 traceback，consecutive_failures 只在单次运行内计数，不做持久化
 - 来源失败隔离：HTML 来源各自独立解析（app/collectors/html.py），单个来源失败只影响自身，其余来源仍会生成日报
-- 排序（app/services/news_ranker.py）：确定性 ranking，rank_score = importance*0.60 + source*0.14 + recency*0.10 + content*0.06 + cluster*0.10，再乘 100；不让 LLM 决定顺序，LLM 只提供 importance_score
+- 每个 HTML 来源一个独立 extractor（Phase 10.13 后共 9 个：anthropic / kimi / deepseek / cohere / cursor / bytedance-seed / tencent-hunyuan / zhipu-glm / minimax）；页面结构变化时抛 PageStructureError，collector 记为 failed 并只影响该来源，绝不静默返回空列表或错误数据
+- 腾讯混元是唯一"非文档型"来源：listing 是 POST-only JSON 接口，走自己的 fetch_hunyuan_listing（可被测试注入），不经过 fetch_html
+- 百度文心是唯一使用 NewsSource.base_url 的来源：Hugo Feed 的 <link> 是站内相对路径（/blog/posts/x/），用 base_url 补成绝对 URL；没有 base_url 时该条目按"无法读取"跳过而不是猜一个域名
+- 排序（app/services/news_ranker.py）：确定性 ranking，rank_score = importance*0.60 + source*0.20 + recency*0.08 + content*0.05 + cluster*0.06，再乘 100；不让 LLM 决定顺序，LLM 只提供 importance_score（Phase 10.13 提高 source 权重，差额取自 recency / content / cluster）
+- 来源等级权重（Phase 10.13）：SOURCE_TYPE_RANKS = official 1.0 / research 0.55 / media 0.15，未知类型 0.10；跨越 official 与 media 的整档差距约 17 分，因此仍然是权重而非硬排序 —— 媒体 importance=95 仍可超过官方 importance=20（实测分界点在重要性相差 30 分处）
+- 媒体精选（app/services/media_selection.py，Phase 10.13）：事件去重之后、ranking 之前，仅对 source_type=media 生效。MediaSelectionSettings(min_importance=60, max_total=5, max_per_source=2)；importance_score 为 None 的媒体文章不进入日报（fallback 分数等于没有判断）；official / research 完全不受限；候选取舍顺序 importance -> published_at（越新优先）-> news_id，结果与抓取顺序无关；输出保持调用方顺序
+- 媒体精选只影响 daily_digest_news 关联，不删除 news_articles 里的任何行，也不重写历史日报；被筛掉的文章仍可被搜索、仍可被以后的 refresh 或 rebuild 选中
+- 媒体精选可观察性：默认只多一行 media selection 汇总（candidates / below threshold / dropped per-source / dropped total / selected）；AI_DAILY_DEBUG_MEDIA_SELECTION=1 逐条打印 KEEP <source> | <title> | importance=NN 与 DROP <source> | <title> | reason=per_source_cap|total_cap|importance<60；refresh CLI 打印 Media selection 汇总块与 Source classes 分布
 - 多样性重排：先按 rank_score 排序，再从头贪心选择，与前文重复 company / topic / source 时扣 soft penalty（company 3.0 / topic 2.0 / source 1.0，单条封顶 8.0），是软约束而非硬配额
 - topic 与 company 识别（app/services/news_topics.py）：确定性关键词规则，无 embeddings / NER；topic 10 类（model_release / agent / research / open_source / product / developer_tools / hardware / business / policy / other），company 命中 OpenAI / Anthropic / Google DeepMind / Meta / NVIDIA / DeepSeek / Alibaba Qwen / Moonshot Kimi / Hugging Face 等；英文关键词按整词匹配
 - Top Stories：TOP_STORY_LIMIT 默认 10（环境变量可覆盖），daily_digest_news 增加 rank / rank_score，is_top_story 读取时按当前 limit 计算；非 Top 新闻仍然全部保留并关联，只是标记为 false
@@ -169,6 +184,28 @@ Push（产品决策，不是缺陷）:
 
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
+
+Verified（Phase 10.13）:
+- 后端完整测试：uv run pytest -> 799 passed（Phase 10.12 基线 708 passed，本阶段新增 91 个用例）
+- 新增测试文件：tests/test_phase_10_13_sources.py（5 个来源的解析 / 空列表 / 结构变化 / 无效日期 / 重复链接 + 端到端 collector）、tests/test_media_selection.py（阈值 / 总量 / 单来源上限 / 官方与研究豁免 / 与事件去重的顺序 / 持久化 / 调试输出 / settings）；tests/test_news_ranker.py 与 tests/test_ai_filter.py 补充来源等级与国内关键词用例
+- 真实 refresh（uv run python -m app.collectors.refresh，2026-09-17）：20 个来源全部 OK，其中 ByteDance Seed 8 / 腾讯混元 9 / 百度文心 18 / 智谱 GLM 15 / MiniMax 13 条有效条目
+- 真实 refresh 的漏斗：Fetched 2513 -> In window 38 -> After dedup 38 -> candidates 38 -> event dedup 38（无重复）-> Source classes official 16 / research 1 / media 21 -> media selection 选中 3（淘汰 5 条 importance<60，13 条 per-source cap）-> 最终日报 20 条（official 16 / research 1 / media 3）
+- 真实 refresh 的前 12 名里官方占 11 条（NVIDIA / Google DeepMind / Mistral AI / Cohere / OpenAI），媒体只在第 12~16 名补盲（Anthropic 安全评估、华为芯片、苹果 AI 服务器），验证了"官方整体前移、媒体明显减少且仍能补盲"
+- 数据安全验证：refresh 前后逐日对比 daily_digests 的 title / description / window 与 daily_digest_news 的 news_id 多重集，4 份历史日报全部 unchanged=True，只新增当天一份；news_articles 行数 33 -> 71（只增不删）
+- 未重跑 rebuild_digests，历史日报的 rank / rank_score 保持原样
+
+Not in scope（Phase 10.13）:
+- 未修改 Mobile：本阶段只改采集 / 来源分类 / 排序 / 媒体精选，UI、接口与缓存逻辑一行未动
+- 未新增任何 API：媒体精选是后端内部行为，日报接口返回的字段与语义不变
+- 未删除数据库里的原始新闻：被筛掉的媒体文章仍然写入 news_articles，仍可被搜索，也仍可被以后的 refresh 或 rebuild 选中；"精选"只影响日报最终链接哪些文章
+- 未重写历史日报：规则只对后续 refresh 生效，除非主动跑 rebuild_digests
+- 未改动 event dedup 的代表文章选择逻辑：它本来就已经是 official > research > media（SOURCE_TYPE_RANK + priority），本阶段只为其增加了测试
+- 未引入新的大型依赖：5 个新来源都用现有的 feedparser / BeautifulSoup / httpx，没有加浏览器自动化或解析框架
+- 未做数据库迁移：本阶段没有新增列或表
+- 未接入 X / Twitter、微信公众号、搜索引擎结果页或任何需要登录 / 代理的来源
+- 未引入 LLM 分类或 LLM 媒体取舍：媒体规则是确定性的计数与阈值，不额外调用模型
+- 未对 Mobile Push、Scheduler、GitHub Trending、搜索做任何改动
+- 未修改既有 AI 关键词的语义：只新增国内品牌强信号，并把边界放宽到允许尾随数字
 
 Not in scope（Phase 10.12）:
 - 未删除后端正文能力：content_original / content_raw / GET /api/v1/news/{id}/content / backfill 命令全部保留，只删除了用户端入口
@@ -274,7 +311,12 @@ Phase 10.10 安全机制:
 - Android SDK 实际位于 F:\software\Sdk，JDK 位于 F:\software\JDK\jdk-22；ANDROID_HOME / ANDROID_SDK_ROOT / JAVA_HOME 未持久化，脚本只在自身进程内设置，不改系统环境
 
 Known Issues:
-- OpenAI 官网对非浏览器请求返回 403，该来源正文稳定退回 RSS summary；实测 15 个来源里只有这一个稳定失败（Phase 10.11）
+- OpenAI 官网对非浏览器请求返回 403，该来源正文稳定退回 RSS summary；实测 20 个来源里只有这一个稳定失败（Phase 10.13）
+- Phase 10.13 的 5 个国内来源都只取"首页可见的那一批"，没有实现翻页：ByteDance Seed 的 ?page= 参数实测无效（每次返回同样 8 条），腾讯混元接口虽然支持 pageNum 但只请求第 1 页（pageSize=50，当前 9 条已全量），智谱 / MiniMax / 百度文心的列表页本身不提供分页；因此首次接入之前的完整历史不会被补齐，只有列表当前可见的文章能进入日报
+- 国内来源靠页面结构解析（腾讯混元是 JSON 字段）：站点改版会明确报 PageStructureError 并记为 failed，需要按新结构更新对应 extractor；这类失败不会静默降级成"今天没有新闻"
+- 媒体精选的阈值 / 上限是保守的初始值（60 / 5 / 2），需要按真实日报继续校准：如果某天媒体只有 1~2 条重要新闻，上限不会补足；如果某天官方源集体失败，媒体同样不会被自动放宽
+- 媒体精选只作用于后续 refresh：历史日报不受影响，也不会自动重算；如需重算必须主动跑 rebuild_digests
+- 来源权重提高后，"同一天同来源多条新闻"的观感更明显：source_weight 变大后 NVIDIA 这类一天发很多条、重要度也不低的官方源会更集中地占据前半段，目前只靠 diversity 的 source_repeat_penalty=1.0 做轻微打散
 - Cohere / Cursor / Anthropic / DeepSeek / Kimi 依赖页面结构：站点改版会让该来源的采集或正文退回 RSS summary，collector 会明确报错（source health 记为 parse），不会静默产出垃圾正文
 - Ars Technica 是全站 AI 分类 Feed，AI 过滤是保守的关键词规则，可能漏掉边缘的 AI 报道
 - source_type 的 tier 映射（news_ranker 权重 / event_dedup 主新闻选择）现在由测试绑定到 NEWS_SOURCE_TYPES，但两者仍是两份手写表，新增 source_type 需要同时改

@@ -54,6 +54,12 @@ class NewsSource:
     # section. Those entries are filtered by AI evidence before they join the
     # pipeline, so a stray non-AI story never reaches dedupe or the LLM.
     requires_ai_filter: bool = False
+    # Origin used to resolve a feed whose links are site-relative. Most feeds
+    # publish absolute URLs and leave this empty; a Hugo blog that links
+    # ``/blog/posts/x`` needs it, or every entry would be skipped for having no
+    # usable URL. It is a resolution base, not a second address: nothing is ever
+    # fetched from it.
+    base_url: str = ""
 
 
 SOURCES: tuple[NewsSource, ...] = (
@@ -138,6 +144,59 @@ SOURCES: tuple[NewsSource, ...] = (
         url="https://cursor.com/blog",
         source_type="official",
         priority=30,
+        kind="html",
+    ),
+    # --- official, first-party, Chinese vendors (Phase 10.13) ---
+    #
+    # The five below are the domestic model vendors. None of them publishes a
+    # usable feed, so each is read from the one official surface that carries
+    # dates and is stable: two embed their listing in the page as JSON, one
+    # exposes a public JSON API, one is a plain server-rendered listing, and one
+    # is a Hugo blog with a real RSS feed.
+    NewsSource(
+        id="bytedance-seed",
+        name="ByteDance Seed / 豆包",
+        url="https://seed.bytedance.com/zh/blog",
+        source_type="official",
+        priority=32,
+        kind="html",
+    ),
+    NewsSource(
+        id="tencent-hunyuan",
+        name="腾讯混元",
+        # The public JSON listing the official blog itself reads. Preferred over
+        # scraping hunyuan.tencent.com/news/blog, which is a client-rendered
+        # shell with no article markup in the response at all.
+        url="https://api.hunyuan.tencent.com/api/blog/publicList",
+        source_type="official",
+        priority=34,
+        kind="html",
+    ),
+    NewsSource(
+        id="baidu-ernie",
+        name="百度文心",
+        # Hugo's built-in feed. Its <link> values are site-relative, so the
+        # origin has to be supplied for the feed to yield usable URLs.
+        url="https://ernie.baidu.com/index.xml",
+        source_type="official",
+        priority=36,
+        base_url="https://ernie.baidu.com",
+    ),
+    NewsSource(
+        id="zhipu-glm",
+        name="智谱 GLM",
+        url="https://www.zhipuai.cn/zh/news",
+        source_type="official",
+        priority=38,
+        kind="html",
+    ),
+    NewsSource(
+        id="minimax",
+        name="MiniMax",
+        # The canonical host; minimaxi.com redirects here.
+        url="https://www.minimax.cn/blog",
+        source_type="official",
+        priority=40,
         kind="html",
     ),
     # --- research labs ---

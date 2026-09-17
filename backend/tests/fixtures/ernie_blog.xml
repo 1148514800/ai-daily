@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>ERNIE Blog</title>
+    <link>/blog/</link>
+    <description>Recent content on ERNIE Blog</description>
+    <image>
+      <title>ERNIE Blog</title>
+      <url>/blog/images/papermod-cover.png</url>
+      <link>/blog/images/papermod-cover.png</link>
+    </image>
+    <generator>Hugo -- 0.148.0</generator>
+    <language>en</language>
+    <copyright>Copyright © 2025 Baidu, Inc. All Rights Reserved.</copyright>
+    <lastBuildDate>Sat, 09 May 2026 00:00:00 +0000</lastBuildDate>
+    <atom:link href="/blog/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>ERNIE 5.1 Officially Released! Topping Multiple Leaderboards — A Model That Writes Better and Understands You More</title>
+      <link>/blog/posts/ernie-5.1-0508-release/</link>
+      <pubDate>Sat, 09 May 2026 00:00:00 +0000</pubDate>
+      <guid>/blog/posts/ernie-5.1-0508-release/</guid>
+      <description>ERNIE 5.1 is officially released, achieving leading performance at only 6% of the pre-training cost of comparable models. Powered by disaggregated fully-asynchronous reinforcement learning and scaled agentic post-training, ERNIE 5.1 delivers comprehensive upgrades across Agent, reasoning, and creative capabilities, ranking 1st in China on the Arena Search Arena.</description>
+    </item>
+<item>
+      <title>ERNIE-5.1-Preview Tops LMArena Text Leaderboard as No.1 Chinese Model!</title>
+      <link>/blog/posts/ernie-5.1-preview-0430-release-on-lmarena/</link>
+      <pubDate>Thu, 30 Apr 2026 00:00:00 +0000</pubDate>
+      <guid>/blog/posts/ernie-5.1-preview-0430-release-on-lmarena/</guid>
+      <description>On April 30, LMArena released its latest rankings. ERNIE-5.1-Preview ranked No. 1 among Chinese models and No. 13 globally on the LMArena Text Arena, placing in the global top 10 across multiple category leaderboards.</description>
+    </item>
+<item>
+      <title>Introducing ERNIE-Image</title>
+      <link>/blog/posts/ernie-image/</link>
+      <pubDate>Wed, 15 Apr 2026 00:00:00 +0000</pubDate>
+      <guid>/blog/posts/ernie-image/</guid>
+      <description>ERNIE-Image is a text-to-image generation model built on a single-stream Diffusion Transformer (DiT) with 8B DiT parameters, achieving leading performance among open-weights models.</description>
+    </item>
+  </channel>
+</rss>

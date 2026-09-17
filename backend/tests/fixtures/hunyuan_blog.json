@@ -1,0 +1,33 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "totalNum": 9,
+    "list": [
+      {
+        "id": 100100,
+        "title": "Hy4 preview 发布",
+        "customUrl": "hy4-preview",
+        "displayPublishTime": 1787846400,
+        "publishedAt": 1787896648,
+        "createdAt": 1787665440
+      },
+      {
+        "id": 100091,
+        "title": "From LR to ELR: A Better Heuristic for Pretraining Dynamics",
+        "customUrl": "elr",
+        "displayPublishTime": 1786377600,
+        "publishedAt": 1786592588,
+        "createdAt": 1786350646
+      },
+      {
+        "id": 100087,
+        "title": "Hyra: 简单有效的科学发现智能体",
+        "customUrl": "hyra",
+        "displayPublishTime": 1784599200,
+        "publishedAt": 1784110327,
+        "createdAt": 1783570319
+      }
+    ]
+  }
+}

@@ -8,6 +8,10 @@ from app.jobs.daily_refresh import run_manual_refresh
 from app.services.digest_store import store
 from app.services.event_dedup import format_event_dedup
 from app.services.article_extractor import format_extraction_stats
+from app.services.media_selection import (
+    format_media_selection,
+    media_debug_enabled,
+)
 from app.services.news_ranker import format_ranking, ranking_debug_enabled
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
 from app.services.source_health import build_report, format_source_health
@@ -30,6 +34,10 @@ def _debug_enabled() -> bool:
 
 def _extraction_debug_enabled() -> bool:
     return os.getenv(EXTRACTION_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _media_debug_enabled() -> bool:
+    return media_debug_enabled()
 
 
 def _format_list(items: list[str]) -> str:
@@ -106,8 +114,11 @@ def main() -> None:
         if report.error:
             print(f"Error ({report.source_name}): {report.error}")
 
+    # The funnel: collected -> inside the issue window -> one row per URL.
+    print(f"Fetched: {store.last_fetched_count}")
+    print(f"In window: {store.last_recent_count}")
+    print(f"After dedup: {store.last_deduped_count}")
     print(f"Candidates: {article_stats.candidates}")
-    print(f"After dedup: {article_stats.candidates}")
     print()
 
     print(format_extraction_stats(store.last_extraction_stats, debug=_extraction_debug_enabled()))
@@ -123,6 +134,15 @@ def main() -> None:
             print()
             for line in format_event_dedup(decision).splitlines():
                 print(line)
+    print()
+
+    print(format_media_selection(store.last_media_stats, debug=_media_debug_enabled() or debug))
+    print()
+
+    print("Source classes (after event dedup)")
+    counts = store.last_type_counts
+    for name in ("official", "research", "media"):
+        print(f"{name.capitalize()}: {counts.get(name, 0)}")
     print()
 
     print(format_ranking(store.last_ranking_stats, debug=ranking_debug_enabled() or debug))

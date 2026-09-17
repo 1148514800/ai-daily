@@ -26,7 +26,14 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from app.collectors.http import DEFAULT_TIMEOUT, HTML_ACCEPT, fetch_text as http_fetch_text
+import httpx
+
+from app.collectors.http import (
+    DEFAULT_TIMEOUT,
+    HTML_ACCEPT,
+    USER_AGENT,
+    fetch_text as http_fetch_text,
+)
 from app.collectors.raw import CollectResult, RawArticle
 from app.config.sources import NewsSource
 from app.pipelines.normalize import news_item_from_raw
@@ -37,6 +44,10 @@ DEEPSEEK_BASE = "https://api-docs.deepseek.com"
 KIMI_BASE = "https://www.kimi.com"
 COHERE_BASE = "https://cohere.com"
 CURSOR_BASE = "https://cursor.com"
+BYTEDANCE_SEED_BASE = "https://seed.bytedance.com"
+HUNYUAN_BASE = "https://hunyuan.tencent.com"
+ZHIPU_BASE = "https://www.zhipuai.cn"
+MINIMAX_BASE = "https://www.minimax.cn"
 
 # Cohere prints the publish date in an "eyebrow" line above each card: a
 # <p> whose whole text is the date. Anchoring on the element rather than on a
@@ -60,8 +71,32 @@ KIMI_ITEMS = '\\"items\\":'
 
 COHERE_LINK_PREFIX = "/blog/"
 CURSOR_LINK_PREFIX = "/blog/"
+MINIMAX_LINK_PREFIX = "/blog/"
 # Paths under /blog/ that are index pages rather than articles.
 LISTING_PATH_SEGMENTS = ("/topic/", "/tag/", "/category/", "/author/", "/page/")
+
+# ByteDance Seed renders its blog list on the server and hands the result to the
+# client as a plain JSON object in the page. Reading that payload is steadier
+# than the markup around it, which is a CSS-framework class soup.
+SEED_ROUTER_DATA = "window._ROUTER_DATA = "
+SEED_BLOG_ROUTE = "(locale$)/blog/page"
+SEED_ARTICLE_PREFIX = "/blog/"
+
+# 腾讯混元's blog is a client-rendered shell with no article markup in the HTML
+# at all, so the listing is read from the public JSON its own site calls. The
+# endpoint is POST-only and takes a small paging body.
+HUNYUAN_LIST_PAYLOAD = {"pageNum": 1, "pageSize": 50}
+HUNYUAN_ARTICLE_PREFIX = "/research/"
+HUNYUAN_LANGUAGE = "zh"
+
+# 智谱 publishes its news and research listing as a React Server Components
+# flight payload, where each record is an escaped JSON object.
+ZHIPU_FLIGHT_MARKER = '\\"newsItems\\":'
+ZHIPU_NEWS_SEGMENT = "news"
+ZHIPU_RESEARCH_SEGMENT = "research"
+
+# MiniMax prints an unambiguous YYYY-MM-DD in each card's metadata line.
+MINIMAX_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
 
 class PageStructureError(Exception):
@@ -209,6 +244,189 @@ def deepseek_entries(page_html: str) -> list[tuple[str, str, datetime]]:
             continue
         published = datetime.strptime(match.group(1), "%Y/%m/%d").replace(tzinfo=timezone.utc)
         entries.append((urljoin(DEEPSEEK_BASE, anchor["href"]), title, published))
+    return entries
+
+
+def bytedance_seed_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """ByteDance Seed's blog list, read from the payload the page ships with.
+
+    The listing is server-rendered into ``window._ROUTER_DATA`` rather than into
+    markup, so the article list is read from that JSON: date, Chinese title and
+    the slug that forms the article's own URL. A page that no longer carries the
+    route is reported as changed instead of quietly yielding nothing.
+    """
+    marker = html.find(SEED_ROUTER_DATA)
+    if marker < 0:
+        raise PageStructureError("no router payload on the ByteDance Seed blog")
+    end = html.find("</script>", marker)
+    raw = html[marker + len(SEED_ROUTER_DATA) : end if end > 0 else None].strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PageStructureError(f"unreadable router payload on the Seed blog: {exc}") from exc
+
+    page = (payload.get("loaderData") or {}).get(SEED_BLOG_ROUTE)
+    if not isinstance(page, dict) or "article_list" not in page:
+        raise PageStructureError("no article list in the ByteDance Seed payload")
+
+    entries: list[tuple[str, str, datetime]] = []
+    for item in page.get("article_list") or []:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("ArticleMeta") or {}
+        # PublishDate is epoch milliseconds at UTC midnight of the local day.
+        raw_date = meta.get("PublishDate")
+        if not isinstance(raw_date, (int, float)):
+            continue
+        published = datetime.fromtimestamp(raw_date / 1000, tz=timezone.utc)
+        # The Chinese record carries the title and abstract the digest wants; the
+        # English one is the fallback for a post that only exists in English.
+        content = item.get("ArticleSubContentZh") or item.get("ArticleSubContentEn") or {}
+        title = str(content.get("Title") or "").strip()
+        slug = str(content.get("TitleKey") or "").strip()
+        if not title or not slug:
+            continue
+        entries.append(
+            (urljoin(BYTEDANCE_SEED_BASE, f"/blog/{slug}"), title, published)
+        )
+    return entries
+
+
+def tencent_hunyuan_entries(payload: str) -> list[tuple[str, str, datetime]]:
+    """Tencent Hunyuan's blog list, from the public JSON its site reads.
+
+    The listing endpoint returns ``{"code":0,...,"data":{"list":[...]}}`` where
+    each record carries a Chinese title and ``publishedAt`` as epoch seconds.
+    The article's URL is built from ``customUrl``, falling back to the numeric id
+    for the few posts that have no slug.
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise PageStructureError(f"unreadable Hunyuan listing JSON: {exc}") from exc
+
+    if not isinstance(data, dict) or data.get("code") not in (0, None):
+        raise PageStructureError(f"Hunyuan listing returned an error: {data.get('msg')!r}")
+    records = ((data.get("data") or {}).get("list")) if isinstance(data.get("data"), dict) else None
+    if not isinstance(records, list):
+        raise PageStructureError("no article list in the Hunyuan listing payload")
+
+    entries: list[tuple[str, str, datetime]] = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        # displayPublishTime is the day the post is dated; publishedAt is when it
+        # went live and is used only when the display date is missing.
+        raw_date = item.get("displayPublishTime") or item.get("publishedAt") or item.get("createdAt")
+        if not isinstance(raw_date, (int, float)):
+            continue
+        published = datetime.fromtimestamp(raw_date, tz=timezone.utc)
+        title = str(item.get("title") or "").strip()
+        slug = str(item.get("customUrl") or item.get("id") or "").strip()
+        if not title or not slug:
+            continue
+        entries.append(
+            (urljoin(HUNYUAN_BASE, f"{HUNYUAN_ARTICLE_PREFIX}{slug}"), title, published)
+        )
+    return entries
+
+
+def zhipu_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """智谱's news and research listing, read from its flight payload.
+
+    The page is a React Server Components response, so the records arrive as
+    escaped JSON inside ``self.__next_f.push`` calls. Each record has a Chinese
+    title, a ``createAt`` timestamp and a ``category`` that decides which section
+    its URL belongs to. Both categories are collected: the research posts are
+    model releases and the news posts are corporate announcements, and a digest
+    that only took one of them would miss half of what the vendor published.
+    """
+    marker = html.find(ZHIPU_FLIGHT_MARKER)
+    if marker < 0:
+        raise PageStructureError("no news payload on the Zhipu listing page")
+
+    # The payload is escaped, so decode before scanning for the array brackets;
+    # otherwise escaped quotes would be read as string delimiters.
+    decoded = _unescape_payload(html[marker:])
+    raw_array = _extract_json_array(decoded, decoded.find("["))
+    if raw_array is None:
+        raise PageStructureError("unterminated news array in the Zhipu payload")
+    try:
+        items = json.loads(raw_array)
+    except json.JSONDecodeError as exc:
+        raise PageStructureError(f"unreadable news array in the Zhipu payload: {exc}") from exc
+    if not isinstance(items, list):
+        raise PageStructureError("Zhipu news payload is not a list")
+
+    entries: list[tuple[str, str, datetime]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # English-only records carry a null Chinese title; the English one is not
+        # used, because a Chinese digest showing an untranslated headline is
+        # worse than not carrying the post.
+        title = str(item.get("title_zh") or "").strip()
+        raw_date = str(item.get("createAt") or "").strip()
+        identifier = str(item.get("id") or "").strip()
+        if not title or not identifier:
+            continue
+        try:
+            published = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        segment = (
+            ZHIPU_RESEARCH_SEGMENT
+            if str(item.get("category") or "") == "blog"
+            else ZHIPU_NEWS_SEGMENT
+        )
+        entries.append(
+            (urljoin(ZHIPU_BASE, f"/zh/{segment}/{identifier}"), title, published.astimezone(timezone.utc))
+        )
+    return entries
+
+
+def minimax_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """MiniMax's blog listing: dated cards with a heading and a standfirst.
+
+    The listing is server-rendered, and each card is one ``/blog/`` anchor that
+    prints its metadata line (category, then ``YYYY-MM-DD``) above an ``<h3>``
+    headline. Anchoring on the anchor and reading its own text keeps the card
+    boundary honest even as the surrounding grid changes.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    anchors = [
+        anchor
+        for anchor in soup.find_all("a", href=True)
+        if _is_article_path(str(anchor["href"]), MINIMAX_LINK_PREFIX)
+    ]
+    if not anchors:
+        raise PageStructureError("no /blog/ links on the MiniMax blog")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for anchor in anchors:
+        href = str(anchor["href"]).strip()
+        date_match = MINIMAX_DATE_RE.search(anchor.get_text(" ", strip=True))
+        if date_match is None:
+            continue
+        try:
+            published = datetime.strptime(date_match.group(1), "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+        heading = anchor.find(["h1", "h2", "h3", "h4"])
+        title = _clean_card_text(heading.get_text(" ", strip=True) if heading else "")
+        if not title:
+            continue
+        url = urljoin(MINIMAX_BASE, href)
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
     return entries
 
 
@@ -446,6 +664,14 @@ def parse_html_page(source: NewsSource, *, index_html: str, page_html: str | Non
             entries = cohere_entries(index_html)
         elif source.id == "cursor":
             entries = cursor_entries(index_html)
+        elif source.id == "bytedance-seed":
+            entries = bytedance_seed_entries(index_html)
+        elif source.id == "tencent-hunyuan":
+            entries = tencent_hunyuan_entries(page_html or index_html)
+        elif source.id == "zhipu-glm":
+            entries = zhipu_entries(index_html)
+        elif source.id == "minimax":
+            entries = minimax_entries(index_html)
         else:
             return CollectResult(
                 source_id=source.id,
@@ -475,13 +701,39 @@ def fetch_html(url: str, timeout: float = DEFAULT_TIMEOUT) -> str:
     return http_fetch_text(url, timeout=timeout, accept=HTML_ACCEPT)
 
 
+def fetch_hunyuan_listing(url: str, timeout: float = DEFAULT_TIMEOUT) -> str:
+    """Read Hunyuan's blog listing.
+
+    This is the one source that is not a document: its listing endpoint is
+    POST-only and answers with JSON, so it cannot go through ``fetch_text``.
+    Kept as its own function so a test can serve it a fixture exactly the way
+    ``fetch_html`` is stubbed for the page-based sources.
+    """
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "accept-language": HUNYUAN_LANGUAGE,
+    }
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
+        response = client.post(url, json=HUNYUAN_LIST_PAYLOAD)
+        response.raise_for_status()
+        return response.text
+
+
 def collect_html_source(
     source: NewsSource,
     *,
     timeout: float = DEFAULT_TIMEOUT,
     fetch_text=None,
+    fetch_listing=None,
 ) -> CollectResult:
-    fetch = fetch_text or fetch_html
+    # Hunyuan is the one source whose listing is a JSON API rather than a page,
+    # so it reads through its own fetcher. Everything else takes the shared one.
+    if source.id == "tencent-hunyuan":
+        fetch = fetch_listing or fetch_text or fetch_hunyuan_listing
+    else:
+        fetch = fetch_text or fetch_html
     try:
         index_html = fetch(source.url, timeout=timeout)
     except Exception as exc:

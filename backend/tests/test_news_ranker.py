@@ -138,6 +138,91 @@ def test_every_configured_source_type_has_a_weight() -> None:
     assert SOURCE_TYPE_RANKS["research"] > SOURCE_TYPE_RANKS["media"]
 
 
+def test_source_class_orders_equal_stories_official_then_research_then_media() -> None:
+    """Phase 10.13: at equal importance the class order is unambiguous."""
+    items = [
+        news("media", source="TechCrunch AI", source_type="media", importance=70),
+        news("research", source="Hugging Face", source_type="research", importance=70),
+        news("official", source="OpenAI", source_type="official", importance=70),
+    ]
+
+    assert order(items) == ["official", "research", "media"]
+    # Order of input must not decide it.
+    assert order(list(reversed(items))) == ["official", "research", "media"]
+
+
+def test_source_class_gap_is_wide_enough_to_be_visible() -> None:
+    """The class has to move the score, not merely break an exact tie.
+
+    Phase 10.13 raised ``source_weight`` because the previous gap was small
+    enough to be swallowed by a one-point importance difference, which made the
+    stated priority order effectively decorative.
+    """
+    settings = RankingSettings()
+    item = news("official", source_type="official", importance=70)
+    media = news("media", source="TechCrunch AI", source_type="media", importance=70)
+    ranked, _stats = rank_news(
+        [item, media], window_start=WINDOW_START, window_end=WINDOW_END, settings=settings
+    )
+    gap = ranked[0].rank_score - ranked[1].rank_score
+    from app.services.news_ranker import SOURCE_TYPE_RANKS
+
+    expected = (
+        (SOURCE_TYPE_RANKS["official"] - SOURCE_TYPE_RANKS["media"])
+        * settings.source_weight
+        * 100.0
+    )
+    assert gap == pytest.approx(expected, abs=0.01)
+    # A whole class step is worth several importance points, so a story cannot
+    # outrank across classes on a one-point difference alone.
+    assert gap > 100.0 * settings.importance_weight * 0.10
+
+
+def test_source_class_still_cannot_override_a_large_importance_gap() -> None:
+    """It stays a weight: a huge media story still leads a routine vendor note."""
+    items = [
+        news("big-media", source="TechCrunch AI", source_type="media", importance=95),
+        news("minor-official", source="OpenAI", source_type="official", importance=20),
+    ]
+
+    assert order(items) == ["big-media", "minor-official"]
+
+
+def test_source_class_gap_does_not_swallow_a_real_importance_difference() -> None:
+    """A clearly bigger story wins whatever class it came from.
+
+    This is the property the widened weight must not break: the largest class
+    step must stay smaller than an importance gap of 30 points, which is the
+    scale at which two stories are describing genuinely different things. The
+    class can reorder comparable stories (what Phase 10.13 asks for) but not
+    overturn a clear importance difference.
+    """
+    settings = RankingSettings()
+    from app.services.news_ranker import SOURCE_TYPE_RANKS
+
+    largest_class_step = (
+        (SOURCE_TYPE_RANKS["official"] - SOURCE_TYPE_RANKS["media"])
+        * settings.source_weight
+        * 100.0
+    )
+    assert largest_class_step < 100.0 * settings.importance_weight * 0.30
+
+    # With the shipped numbers the crossover sits just under 30 points: a media
+    # story 20 points ahead still loses to the vendor, one 50 points ahead wins.
+    # Stated as round numbers so a future rebalance moves the assertion rather
+    # than breaking it on a rounding boundary.
+    below = [
+        news("media", source="TechCrunch AI", source_type="media", importance=60),
+        news("official", source="OpenAI", source_type="official", importance=40),
+    ]
+    assert order(below) == ["official", "media"]
+    above = [
+        news("media", source="TechCrunch AI", source_type="media", importance=90),
+        news("official", source="OpenAI", source_type="official", importance=40),
+    ]
+    assert order(above) == ["media", "official"]
+
+
 def test_content_quality_is_a_weak_signal() -> None:
     """A full body beats a feed teaser, but only by a little."""
     items = [
@@ -400,6 +485,12 @@ def test_diversity_never_demotes_a_much_more_important_story() -> None:
     Real data surfaced this: with the penalty set too high, an importance-88
     story sank below a 72 for no reason other than arriving after a run from the
     same source. The cap keeps the worst case inside one importance band.
+
+    Both sides are the same source class on purpose. Source class is a separate,
+    much larger signal (Phase 10.13 widened it to 17 points between official and
+    media), so a media story here would be testing that weight rather than the
+    diversity penalty this case is about. Comparison of the classes is covered
+    by the source-priority tests above.
     """
     crowd = [
         news(f"crowd-{index}", title=f"Note {index}", importance=70)
@@ -409,7 +500,6 @@ def test_diversity_never_demotes_a_much_more_important_story() -> None:
         "major",
         title="A landmark model release",
         source="Another Outlet",
-        source_type="media",
         importance=88,
     )
     ranked, _stats = rank_news(

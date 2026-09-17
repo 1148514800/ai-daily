@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.collectors.rss import CollectResult, collect_all_sources
 from app.config.ranking import top_story_limit
+from app.config.sources import NEWS_SOURCE_TYPES
 from app.config.timezone import digest_date_for, today_digest_date
 from app.db.repositories import (
     DigestRepository,
@@ -22,6 +23,13 @@ from app.services.digest_window import (
     resolve_window,
 )
 from app.services.event_dedup import EventDedupStats, dedupe_events, log_event_dedup
+from app.services.media_selection import (
+    MediaSelectionSettings,
+    MediaSelectionStats,
+    log_media_selection,
+    media_debug_enabled,
+    select_media_articles,
+)
 from app.services.news_ranker import (
     RankingStats,
     apply_ranking,
@@ -94,10 +102,20 @@ class DigestStore:
     def __init__(self) -> None:
         self.last_error: str | None = None
         self.last_reports: list[CollectResult] = []
+        # The pipeline funnel, in the order the stages run. Kept as plain
+        # counters so the refresh command can print where articles were lost
+        # without re-deriving it from the reports (which only know their own
+        # pre-window output).
+        self.last_fetched_count: int = 0
         self.last_recent_count: int = 0
+        self.last_deduped_count: int = 0
+        # Survivors of event dedup by source class: what media selection sees,
+        # and therefore what "media before selection" has to be measured on.
+        self.last_type_counts: dict[str, int] = {}
         self.last_llm_stats: EnrichmentStats = EnrichmentStats()
         self.last_extraction_stats: ExtractionStats = ExtractionStats()
         self.last_event_stats: EventDedupStats = EventDedupStats()
+        self.last_media_stats: MediaSelectionStats = MediaSelectionStats()
         self.last_ranking_stats: RankingStats = RankingStats()
         self.last_saved_date: str | None = None
         self.last_news_count: int = 0
@@ -155,6 +173,7 @@ class DigestStore:
             merged.extend(report.valid)
 
         in_window = [article for article in merged if window.contains(article.published_at)]
+        self.last_fetched_count = len(merged)
         self.last_recent_count = len(in_window)
         if len(in_window) != len(merged):
             logger.info(
@@ -165,6 +184,7 @@ class DigestStore:
                 len(in_window),
             )
         deduped = dedupe_articles(in_window)
+        self.last_deduped_count = len(deduped)
 
         # Original-language article bodies, fetched once per article. A failure
         # here only costs the body: the article continues with its RSS summary.
@@ -271,6 +291,7 @@ class DigestStore:
         window: DigestWindow,
         news_items: list[NewsItem],
         github_projects: list[GitHubProject] | None,
+        media_settings: MediaSelectionSettings | None = None,
     ) -> bool:
         """Write news, GitHub projects, and the digest in one transaction.
 
@@ -305,13 +326,27 @@ class DigestStore:
             # news_articles; only the digest link is folded.
             merged, event_stats = dedupe_events(in_window)
             self.last_event_stats = event_stats
+            self.last_type_counts = {
+                name: sum(1 for item in merged if item.source_type == name)
+                for name in NEWS_SOURCE_TYPES
+            }
             log_event_dedup(event_stats, debug=_event_debug_enabled())
+            # Second-pass curation: event dedup has already picked the source
+            # that represents each event, so a media story dropped here is one
+            # whose event nothing first-party covered. Official and research
+            # entries pass through untouched, and no article is deleted — only
+            # the digest link is skipped.
+            selected, media_stats = select_media_articles(
+                merged, settings=media_settings or MediaSelectionSettings()
+            )
+            self.last_media_stats = media_stats
+            log_media_selection(media_stats, debug=media_debug_enabled())
             # Ranking runs last so it sees one entry per event, and before the
             # write so the stored order *is* the reading order. It only reorders:
-            # every merged item is still linked, so nothing is dropped from the
-            # tail of the digest.
+            # every surviving item is still linked, so nothing is dropped from
+            # the tail of the digest.
             ranked_items, ranking, rank_stats = apply_ranking(
-                merged,
+                selected,
                 window_start=window.start,
                 window_end=window.end,
                 cluster_sizes=event_stats.cluster_sizes,
@@ -333,7 +368,9 @@ class DigestStore:
                 # to the day. Only a non-empty result replaces the ordering.
                 github_ids = repository.get_github_ids(date)
 
-            description = self._describe(merged)
+            # Described from what the digest actually links, so the summary can
+            # never claim a source that curation removed.
+            description = self._describe(selected)
             repository.save(
                 date=date,
                 title=DIGEST_TITLE,

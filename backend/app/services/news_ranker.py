@@ -42,15 +42,21 @@ RANK_DEBUG_ENV = "AI_DAILY_DEBUG_RANKING"
 
 # Source class weights, matching how the rest of the pipeline already thinks
 # about provenance: a first-party announcement outranks a lab's research post,
-# which outranks second-hand reporting. The gap is deliberately small, because a
-# big media story has to be able to overtake a minor official one.
+# which outranks second-hand reporting. Phase 10.13 widened the gaps so that at
+# *equal* importance the order is unambiguous, and raised ``source_weight`` so
+# the class actually moves the score.
+#
+# It is still a weight, never a gate: importance carries 0.60 of the score and a
+# media score spans 0.15..0.15, so a 95-importance scoop still leads a routine
+# 20-importance vendor note. What the widening buys is that a merely comparable
+# official post now clearly beats a merely comparable press write-up.
 #
 # The middle class is ``research``, the class Phase 10.11 introduced in place of
 # the old ``blog``. An unlisted type still falls back to the lowest weight, but
 # it must not be a type that actually occurs: a stale key here would silently
 # demote every Hugging Face and Microsoft Research story below the media.
-SOURCE_TYPE_RANKS = {"official": 1.0, "research": 0.6, "media": 0.35}
-UNKNOWN_SOURCE_TYPE_RANK = 0.3
+SOURCE_TYPE_RANKS = {"official": 1.0, "research": 0.55, "media": 0.15}
+UNKNOWN_SOURCE_TYPE_RANK = 0.10
 
 # How the body was obtained. Having real text is a weak signal: a long article
 # is not more important than a short one, it is merely cheaper to summarise and
@@ -84,14 +90,19 @@ class RankingSettings:
     """
 
     top_story_limit: int = DEFAULT_TOP_STORY_LIMIT
-    # Component weights, as a share of the final 0..100 score.
+    # Component weights, as a share of the final 0..100 score. Phase 10.13 moved
+    # 6 points from the auxiliary signals into ``source_weight``: provenance is
+    # what this phase is about, and the points come from recency, content and
+    # corroboration, none of which was ever meant to reorder the digest on its
+    # own. Importance stays the largest single weight by far, so source class
+    # still only decides between stories of comparable importance.
     importance_weight: float = 0.60
-    source_weight: float = 0.14
-    recency_weight: float = 0.10
-    content_weight: float = 0.06
+    source_weight: float = 0.20
+    recency_weight: float = 0.08
+    content_weight: float = 0.05
     # A small bonus for an event several independent outlets reported. Capped at
     # one merge so a story does not climb on repetition alone.
-    cluster_weight: float = 0.10
+    cluster_weight: float = 0.06
     cluster_bonus_per_extra_source: float = 0.5
     cluster_bonus_cap: float = 2.0
     # Soft diversity penalties, applied while the order is assembled. Sizes are

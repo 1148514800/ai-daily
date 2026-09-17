@@ -154,6 +154,17 @@ npm test
 - Cohere Blog：`https://cohere.com/blog`（官方页面 HTML）
 - Cursor Blog：`https://cursor.com/blog`（官方页面 HTML）
 
+国内 AI 官方一手来源（Phase 10.13 新增，全部 `source_type=official`，都没有可用的 RSS，因此各自独立解析）：
+
+- ByteDance Seed / 豆包：`https://seed.bytedance.com/zh/blog`（页面内嵌 `window._ROUTER_DATA` JSON，读 `article_list`；发布日期为 epoch 毫秒）
+- 腾讯混元：`https://api.hunyuan.tencent.com/api/blog/publicList`（官方公开 JSON 接口，**POST** `{pageNum, pageSize}`；`hunyuan.tencent.com/news/blog` 是客户端渲染空壳，页面上没有任何文章标记）
+- 百度文心：`https://ernie.baidu.com/index.xml`（Hugo 原生 RSS；`<link>` 是站内相对路径，靠 `base_url` 补全为绝对 URL）
+- 智谱 GLM：`https://www.zhipuai.cn/zh/news`（React Server Components flight payload 中的 `newsItems`，`category` 决定走 `/zh/news/` 还是 `/zh/research/`）
+- MiniMax：`https://www.minimax.cn/blog`（服务端渲染的 `/blog/` 卡片，卡片自带 `YYYY-MM-DD`；`minimaxi.com` 301 到该域名）
+
+- 五个来源都不写“万能中国网站解析器”：一个来源一个 extractor，站点改版只会让该来源报 `PageStructureError`，不会静默产出错误数据
+- 每个 extractor 都从真实页面验证过文章 URL、标题与发布时间字段，不是只把 URL 写进配置
+
 研究来源（`source_type=research`，实验室研究而非二手报道）：
 
 - Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
@@ -173,6 +184,8 @@ npm test
 - HTML 来源都在 `app/collectors/html.py` 中各自独立解析，任一来源失败只影响自身
 - 机器之心未接入：服务端对所有请求（含 `robots.txt` 中声明的 sitemap 与实际文章页）统一返回同一个 3251 字节的机器人拦截页，没有可用的 RSS 或文章列表
 - **AI 相关性过滤（`app/pipelines/ai_filter.py`）**：Ars Technica 是全站 AI 分类 Feed，含非 AI 报道，因此该来源标记 `requires_ai_filter=True`，在进入 issue window / dedup / ranking 之前先用确定性关键词规则过滤；判定要求证据来自**不同关键词家族**（例如 `robot` + `robotics` 属于同一家族，只算一条证据），避免一篇机器人评测靠同义词堆叠混进来。过滤只用标题与摘要，不调用 LLM
+- Phase 10.13 补入国内 AI 品牌强信号：`doubao` / `豆包` / `bytedance seed` / `seedance` / `seedream`、`hunyuan` / `腾讯混元` / `混元`、`ernie` / `文心` / `文心大模型` / `文心一言`、`glm` / `chatglm` / `智谱` / `zhipu` / `autoglm`、`minimax` / `hailuo` / `海螺`。命中的是**模型 / 产品名**，不是公司名：`百度` / `腾讯` / `字节` 既不在强信号也不在弱信号里，所以公司名本身永远不能把一篇非 AI 报道放进日报
+- 关键词边界允许**尾随数字**（`Hunyuan3D`、`混元3D`、`GLM4`、`Gemini2.5`），因为模型版本就是这么命名的；前边界仍然严格，`said` / `email` 依然不会命中 `ai`
 
 ### Source Health
 
@@ -246,6 +259,11 @@ Kimi                OK      19
 Mistral AI          OK      86
 Cohere              OK      22
 Cursor              OK      12
+ByteDance Seed / 豆包  OK      8
+腾讯混元              OK      9
+百度文心              OK      18
+智谱 GLM              OK      15
+MiniMax             OK      13
 Hugging Face        OK      862
 Microsoft Research  OK      10
 TechCrunch AI       OK      20
@@ -349,14 +367,16 @@ Top Stories
 
 ```text
 importance   0.60   LLM importance_score（核心信号，但不是唯一信号）
-source       0.14   官方一手 > 研究实验室 > 媒体
-recency      0.10   在 issue window 内的相对位置（越新越高）
-content      0.06   正文完整度（web / rss_full > rss_summary fallback）
-cluster      0.10   同一事件被多个来源报道时的小幅加成（有上限）
+source       0.20   官方一手 > 研究实验室 > 媒体（Phase 10.13 从 0.14 上调）
+recency      0.08   在 issue window 内的相对位置（越新越高）
+content      0.05   正文完整度（web / rss_full > rss_summary fallback）
+cluster      0.06   同一事件被多个来源报道时的小幅加成（有上限）
 ```
 
 - `importance_score` 缺失时按中性值（35）处理，不会直接判 0，也不会因此排到最前
-- 来源只是加权因素之一：来源层级差距刻意留小，媒体的大新闻仍然可以超过普通的官方新闻
+- Phase 10.13 把 `source_weight` 从 0.14 提到 0.20，差额来自 recency（0.10→0.08）、content（0.06→0.05）与 cluster（0.10→0.06）：这三个本来都只是辅助信号，不该单独改变日报顺序
+- **来源仍然是权重，不是硬排序**：类内权重 `official 1.0 / research 0.55 / media 0.15`，跨越 official 与 media 的整档差距约 17 分，低于「重要性差 30 分」这个量级，所以媒体的大新闻（例如 importance 95）依然能超过普通的官方小更新（例如 importance 20）；反过来，重要性相差 20 分以内的两条新闻，才由来源等级决定先后
+- 官方 / 研究 / 媒体在**同等重要性**下的顺序现在是明确且可测的：`official > research > media`
 - 正文长度**只是弱信号**：长度会饱和，不会出现「文章越长越重要」
 - recency 只在同一窗口内比较，不会压过巨大的 importance 差距（不是「最新 = 第一名」）
 - 同一事件被多个来源报道时，`cluster size` 提供很小的加成，且封顶
@@ -404,6 +424,32 @@ TOP_STORY_LIMIT = 10   （可用环境变量 TOP_STORY_LIMIT 覆盖）
 - `daily_digest_news` 增加 `rank` 与 `rank_score` 两列（`rank` 由 `position` 推导，`is_top_story` 读取时按当前 `TOP_STORY_LIMIT` 计算），因此调整 Top N 不需要重写历史
 - `rank` 放在关联表而不是 `news_articles`：同一条新闻在不同日报里的排名可能不同
 - 旧数据库通过既有的 `ALTER TABLE ADD COLUMN` 补列即可打开，不需要 Alembic
+
+### 媒体精选（Phase 10.13）
+
+排序只改变顺序、不删除文章，所以 Phase 10.13 之前媒体资讯即使排在最后也**全部**进入日报。现在在事件去重之后、最终排序之前增加一层明确的 **media selection**（`app/services/media_selection.py`）：
+
+```text
+collect -> window -> URL dedupe -> extract -> LLM enrich
+        -> event dedup -> media selection -> ranking -> persist
+```
+
+只对 `source_type == media` 生效，三条规则：
+
+```text
+min_importance   60   媒体文章必须有真实的 importance_score，且 >= 60 才进入日报
+max_total         5   每份日报最多 5 条媒体新闻
+max_per_source    2   单一媒体来源最多 2 条
+```
+
+- **`importance_score` 为 `None` 的媒体文章不进入日报**：fallback 分数代表 pipeline 没有做出任何判断，不足以占用一个媒体名额
+- **`official` / `research` 完全不受这三条规则限制**：数量上限是为了约束**二手**报道，套用到厂商自己的发布上会正好压制这个日报存在的理由
+- 媒体候选之间的取舍顺序是 `importance_score` → 发布时间（越新越优先）→ `news_id`，因此结果不取决于抓取顺序
+- 放在事件去重**之后**：同一事件已被官方 / 研究源代表时，那条媒体重复项早已被折叠掉，根本不会成为媒体候选，也就不会被"补回来"
+- 媒体只负责补盲：官方通常不会第一时间发布的重大融资、收购、监管、诉讼、安全事故等，只要 `importance_score >= 60` 且没有更高等级来源覆盖，仍然能进入日报
+- **不删除任何数据**：被筛掉的媒体文章照样写入 `news_articles`（仍可被搜索、仍可被以后的 refresh 或 rebuild 选中），只是**不建立当天日报的关联**；历史日报不会被重写，规则只影响后续 refresh
+- 阈值、总量、单来源上限集中在 `MediaSelectionSettings`，可用 `media_settings=` 注入，不散落在业务代码里；`DigestStore` 只负责编排，裁剪逻辑不写在 `persist()` 内
+- 调试输出：默认每个 refresh 只打印一行 `media selection: candidates=... selected=...`；`AI_DAILY_DEBUG_MEDIA_SELECTION=1` 额外逐条打印 `KEEP <来源> | <标题> | importance=NN` 与 `DROP <来源> | <标题> | reason=per_source_cap|total_cap|importance<60`，refresh CLI 也打印 `Media selection` 汇总块
 
 ### API
 
@@ -1276,8 +1322,10 @@ uv run python -m app.jobs.backfill_article_content --date 2026-09-12
 
 ### 已知限制
 
-- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary；实测 15 个来源里只有这一个稳定失败
-- Cohere / Cursor / Anthropic / DeepSeek / Kimi 靠页面结构解析，站点改版会让对应来源的正文退回 RSS summary（采集器会明确报错，不会静默产出垃圾正文）
+- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary；实测 20 个来源里只有这一个稳定失败
+- Cohere / Cursor / Anthropic / DeepSeek / Kimi / ByteDance Seed / 智谱 GLM / MiniMax 靠页面结构解析，站点改版会明确报错（`PageStructureError`），对应来源的正文退回 RSS summary，不会静默产出垃圾正文
+- 腾讯混元读的是官方公开 JSON 接口而不是页面：接口字段变化同样会报结构错误，而不是返回空列表
+- 五个国内来源都不提供"翻页"：ByteDance Seed 的 `?page=` 参数实测无效（每次返回同样 8 条），因此每个来源只取首页可见的那一批，接入至今的完整历史需要改采集方式
 - Ars Technica 是全站 AI 分类 Feed，含非 AI 报道，进入 pipeline 前用确定性关键词规则过滤（不做 LLM 分类）；过滤是保守的，可能漏掉边缘报道
 - 提取是启发式规则而非通用阅读器：个别站点结构或反爬变化时会退回 RSS summary，并在 `content_extraction_method` 与日志中标明
 - `content_language` 只做脚本判定（中/英/日/韩/俄），不做统计语言识别
@@ -1856,7 +1904,8 @@ GET /api/v1/refresh/status
 
 ## 数据来源现状
 
-- RSS / 官方页面（11 official + 2 research + 2 media，共 15 个来源）：真实，每次 refresh 逐个抓取并输出 source health
+- RSS / 官方页面 / 官方 JSON 接口（16 official + 2 research + 2 media，共 20 个来源）：真实，每次 refresh 逐个抓取并输出 source health
+- 其中 16 official 里有 5 个是 Phase 10.13 新增的国内厂商（ByteDance Seed / 豆包、腾讯混元、百度文心、智谱 GLM、MiniMax）
 - GitHub Trending：真实，独立的开发者信号，不是 `NewsSource`
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from time import struct_time
+from urllib.parse import urljoin
 
 import feedparser
 
@@ -61,7 +62,14 @@ def _http_url(value: object) -> str:
     return ""
 
 
-def _entry_url(entry: dict) -> str:
+def _entry_url(entry: dict, base_url: str = "") -> str:
+    """An entry's absolute URL, resolving a site-relative link against its site.
+
+    A Hugo feed publishes ``<link>/blog/posts/x/</link>``, which is a valid link
+    for a browser but not something the pipeline can store, dedupe or open.
+    ``base_url`` is the source's own origin, used only to complete such a link;
+    without it the entry is reported as unreadable rather than guessed at.
+    """
     direct = _http_url(entry.get("link"))
     if direct:
         return direct
@@ -70,7 +78,11 @@ def _entry_url(entry: dict) -> str:
         found = _http_url(href)
         if found:
             return found
-    return _http_url(entry.get("id") or entry.get("guid"))
+    for value in (entry.get("link"), entry.get("id"), entry.get("guid")):
+        relative = str(value or "").strip()
+        if relative.startswith("/") and base_url:
+            return urljoin(base_url, relative)
+    return ""
 
 
 def _entry_body(entry: dict) -> str:
@@ -119,7 +131,7 @@ def parse_feed(xml: str, source: NewsSource) -> CollectResult:
 
     for entry in entries:
         title = str(entry.get("title") or "").strip()
-        url = _entry_url(entry)
+        url = _entry_url(entry, source.base_url)
         summary = str(entry.get("summary") or entry.get("description") or "").strip()
         published_at = _published_at(entry)
 
