@@ -64,11 +64,23 @@ Completed:
 - 媒体精选层（app/services/media_selection.py）：事件去重之后、最终 ranking 之前，只对 source_type=media 生效的三条规则 —— min_importance=60、max_total=5、max_per_source=2；importance_score 为 None 的媒体文章不进入日报；official / research 完全不受这三条限制（Phase 10.13）
 - 媒体精选不删除任何数据：被筛掉的文章照样写入 news_articles（仍可搜索、仍可被以后的 refresh 或 rebuild 选中），只是不建立当天日报关联；历史日报不被重写，规则只影响后续 refresh（Phase 10.13）
 - 阈值集中在 MediaSelectionSettings（可注入），裁剪逻辑不写在 DigestStore.persist() 内；refresh 默认只多一行 media selection 汇总，AI_DAILY_DEBUG_MEDIA_SELECTION=1 逐条打印 KEEP / DROP 与原因（Phase 10.13）
+- Phase 10.14 把"一个公司 = 一个新闻源"的假设去掉：NewsSource 新增 organization / channel 两个字段，一家公司可以有多个官方渠道（Anthropic 的 newsroom / research / engineering 是同一个 organization 的三个 channel），来源总数由 20 增至 33（29 official + 2 research + 2 media）（Phase 10.14）
+- NEWS_CHANNELS 定义 9 类官方渠道：news / research / product / engineering / developer / model / security / changelog / cloud；channel 与 source_type 严格分离 —— Anthropic Institute 是 organization=anthropic + channel=research + source_type=official，因为"谁发布的"决定可信等级，"发在哪个栏目"决定内容渠道（Phase 10.14）
+- 新增 13 个官方渠道：anthropic-research / anthropic-engineering / cursor-changelog / cohere-research / nvidia-developer / meta-ai-blog / alibaba-model-studio / google-ai / google-gemini / google-research / google-cloud-ai / tencent-cloud-ai / tencent-workbuddy，全部 source_type=official、priority 42~58（official 档位仍在 60 的 research 之下）（Phase 10.14）
+- 修复 Anthropic 漏源：newsroom extractor 不再只认 /news/，改为接受 /news/ /research/ /institute/ /engineering/，以及同域下自带发布日期的顶层文章卡片（找回 /claude-fable-and-mythos-5-1）；/category/ /tag/ /author/ /research/team/ 仍然排除（Phase 10.14）
+- 修复腾讯漏源：腾讯云 AI（channel=cloud）与混元（channel=model）是两个独立渠道，WorkBuddy 单独作为 channel=product；腾讯云公告是全站运维公告，启用 requires_ai_filter 后 GLM-5v-Turbo / DeepSeek-V4-Flash 这类模型更新通知能进候选，负载均衡 / 计费等非 AI 条目被丢弃（Phase 10.14）
+- HTML 采集路径补齐 AI 相关性过滤：过去 requires_ai_filter 只在 RSS 路径生效，现在 parse_html_page 走同一个 _result_from_entries，所以腾讯云 / Google Cloud AI 这类宽泛官方渠道标记后真的会被过滤（Phase 10.14）
+- AI 强信号补充 AI factory / AI factories / physical AI（实测在 NVIDIA feed 上找回 3 条真实 AI 新闻、放进 0 条 GeForce NOW 游戏推广）；仍然坚持命中的是模型 / 平台词汇而不是公司名，腾讯 / 百度 / Google / NVIDIA 不在任何词表里（Phase 10.14）
+- source_health 新增 EMPTY 与 UNSUPPORTED：EMPTY 表示请求成功但本次窗口没有内容，FAIL 表示 extractor / 网络 / 结构错误；"这周很安静"和"页面结构变了"不再混为一谈（Phase 10.14）
+- refresh 新增 Official Source Coverage 区块：按 organization 分组、按 channel 列出 OK / EMPTY / FAIL / UNSUPPORTED 与条数，末尾一行汇总 official coverage: 33/39 channels OK, 6 unsupported（Phase 10.14）
+- 明确记录 6 个没有稳定公开来源的渠道（UNSUPPORTED_CHANNELS，每条带原因）：openai/developer、bytedance/cloud、moonshot/changelog、minimax/product、baidu/cloud、zhipu/developer；火山引擎新闻列表自 2025-10-15 起未更新，因此不接入（"页面废弃"而不是"最近没更新"）（Phase 10.14）
+- 同一事件多来源去重继续复用 event_dedup：official 渠道之间、official 与 media 之间同一事件只保留一条，代表条目按 official > research > media 选择（本阶段只加测试，未重写选择逻辑）（Phase 10.14）
+- 不重复请求：Anthropic 只抓一个 newsroom 列表再按 path 区分 channel，Google 的 5 个 Feed 各自是独立官方 Feed 而不是同一页面的重复抓取（Phase 10.14）
 
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
-- 来源配置（app/config/sources.py）：20 个来源，`source_type` 只有 official / research / media 三种，priority 只在同一 type 内排序（official 10~40 / research 60~70 / media 120~130）；`requires_ai_filter` 标记需要在进入 pipeline 前做 AI 相关性过滤的来源；`base_url` 只用于补全站内相对链接（Hugo Feed），不是第二个抓取地址
+- 来源配置（app/config/sources.py）：33 个来源（29 official + 2 research + 2 media，另有 6 个官方渠道因无稳定来源记为 unsupported），`source_type` 只有 official / research / media 三种，priority 只在同一 type 内排序（official 10~58 / research 60~70 / media 120~130）；`organization` 表示公司归属（openai / anthropic / google / ...），`channel` 表示官方渠道类型（news / research / product / engineering / developer / model / security / changelog / cloud），两者与 `source_type` 互不替代；`requires_ai_filter` 标记需要在进入 pipeline 前做 AI 相关性过滤的来源（RSS 与 HTML 两条路径都生效）；`base_url` 只用于补全站内相对链接（Hugo Feed），不是第二个抓取地址
 - 来源 -> Collector（RSS / 官方页面 HTML / 官方 JSON 接口）-> optional AI filter -> issue window filter（window_start < published_at <= window_end，未来时间自然被剔除）-> rule dedup -> article extraction -> LLM enrich -> SQLite -> event dedup -> media selection -> ranking -> daily_digest_news
 - 来源 UI 只有一层：Mobile 按后端返回的 `source_type` 渲染 官方 / 研究 / 媒体 badge，不按来源名称猜类型，也不按类型重新分组（保证 ranking 阅读体验不变）
 - 两层内容：列表只有中文标题 / 摘要 / key_points / Why it matters / importance_score（NewsItem，正文字段 exclude）；详情（NewsDetail）也不含正文，只给 `has_content` / `content_language` / `content_extraction_method` / `content_quality`
@@ -184,6 +196,27 @@ Push（产品决策，不是缺陷）:
 
 Next:
 Phase 11 - 待定（云端部署 / HTTPS、内容质量迭代）
+
+Verified（Phase 10.14）:
+- 后端完整测试：uv run pytest -> 856 passed, 5 skipped（Phase 10.13 基线 801 passed；本阶段新增 55 个用例 + 8 个 HTML fixture）
+- 新增测试文件：tests/test_phase_10_14_coverage.py —— source metadata（organization / channel / source_type 合法性、channel 不等于 source_type、同一公司多渠道同 organization）、Anthropic 多路径（/news/ /research/ /institute/ 顶层文章 + /category/ /tag/ /author/ /research/team/ 排除 + 无日期卡片跳过）、腾讯多渠道（Hunyuan 与 Cloud 独立、WorkBuddy 版本不塌缩成一条）、宽泛官方渠道 AI 过滤（非 AI 丢弃 / AI 保留 / 已收敛渠道不过滤）、organization 分组与覆盖率输出、EMPTY 与 FAIL 区分、unsupported 渠道带原因、事件去重（三渠道同一事件 -> 1 条、official 胜 media）、渠道失败隔离
+- 真实 refresh（uv run python -m app.collectors.refresh，2026-09-19）：33 个来源全部请求成功，无 FAIL；Official Source Coverage 汇总为 official coverage: 33/39 channels OK, 6 unsupported
+- 真实 refresh 的 organization / channel 覆盖（有效条目数）：anthropic news 13 / research 10 / engineering 24；tencent model 9 / cloud 3 / product 70；google cloud 20 / product 20+20 / research 100+100；openai news 1210；meta research 9+10；nvidia news 10 / developer 100；alibaba model 44+414；bytedance model 8；baidu model 18；zhipu news 15；minimax news 13；cohere news 22 / research 6；cursor news 12 / changelog 5；moonshot news 19；deepseek news 18；mistral news 87；huggingface research 862；microsoft research 10；techcrunch news 20；ars-technica news 13
+- 真实 refresh 的漏斗：Fetched 3314 -> In window 37 -> After dedup 37 -> event dedup 后 37（Official 10 / Research 0 / Media 27）-> media selection 选中 4（淘汰 6 条 importance<60、17 条 per-source cap）-> 当天日报 14 条（official 10 / media 4）；rank 前 3 分别是 NVIDIA Developer AIPerf、Google Cloud AI 基础设施漏洞扫描、Anthropic x Accenture 嵌入式评估
+- 历史窗口回归（collect_all_sources()，2026-09-09 ~ 2026-09-19）：Anthropic /institute/measuring-pace-of-ai-development（09-17）、Tencent WorkBuddy 5.5.6 / 5.5.5（09-10）、Tencent Cloud GLM-5v-Turbo 下线通知（09-17）、OpenAI astra-for-law（09-17）、Cursor changelog/projects（09-10）、Cohere building-multilingual-bridges（09-10）、阿里云百炼 happyoyster-1.0-adventure（09-17）均在窗口内被采集
+- 数据安全：refresh 前后 news_articles 108 行不变（本次无新增文章写入）；未重算任何历史日报
+
+Not in scope（Phase 10.14）:
+- 未修改 Mobile：本阶段只改后端采集 / 来源配置 / 健康输出，UI、接口与缓存一行未动
+- 未新增任何 API：Official Source Coverage 只是 refresh 的 stdout，覆盖率不落库、不对外暴露
+- 未重写已经稳定的 extractor：Seed / 智谱 / MiniMax / Kimi / Cohere / Cursor 的解析逻辑保持原样，只补了真正漏源的渠道
+- 未实现 Hot Topics / 48h 热点池：留给下一阶段
+- 未调整 ranking、媒体精选阈值（60 / 5 / 2）与 Daily Digest issue window
+- 未修改数据库 schema：organization / channel 只存在于来源配置与运行时报告，不新增列、不做迁移
+- 未做 organization 级别的榜单多样性限制：本阶段只把 organization 贯穿到 config / health / debug，不重构 ranking
+- 未引入浏览器自动化或新依赖：13 个新渠道全部复用 feedparser / BeautifulSoup / httpx
+- 未接入需要登录、第三方转载、搜索结果页、微信公众号或 X / Twitter 的来源
+- 未对未支持渠道做兜底抓取：UNSUPPORTED 是结论，不是待办
 
 Verified（Phase 10.13）:
 - 后端完整测试：uv run pytest -> 799 passed（Phase 10.12 基线 708 passed，本阶段新增 91 个用例）
@@ -311,7 +344,16 @@ Phase 10.10 安全机制:
 - Android SDK 实际位于 F:\software\Sdk，JDK 位于 F:\software\JDK\jdk-22；ANDROID_HOME / ANDROID_SDK_ROOT / JAVA_HOME 未持久化，脚本只在自身进程内设置，不改系统环境
 
 Known Issues:
-- OpenAI 官网对非浏览器请求返回 403，该来源正文稳定退回 RSS summary；实测 20 个来源里只有这一个稳定失败（Phase 10.13）
+- Phase 10.14 的 organization / channel 是来源配置的静态属性，没有写进数据库：debug 输出与 health 报告能看到公司覆盖，但已入库的历史新闻无法按 organization 反查（需要时从 source 名称映射）
+- Official Source Coverage 只在 refresh 进程中构建，不持久化：看不到"某个 channel 连续 N 天为 0"的趋势。判断"最近真没更新"还是"结构悄悄变了"目前仍靠人工对比 EMPTY 与 FAIL
+- 一个公司多个 channel 时，同一事件仍可能先被两个 channel 各自采到再靠 event_dedup 合并：合并依赖标题 / URL 规则，官方渠道之间标题差异较大时可能保留两条
+- 阿里云百炼模型广场一次交出 414 条（历史全量模型列表），远超其他官方渠道：这些条目都在 issue window 之外，不进入日报，但会让 Fetched 计数显著偏大
+- 腾讯云公告是宽泛运维公告列表，AI 过滤是保守关键词规则：涉及模型 / 智能体的通知能进候选，但措辞里没有模型名的 AI 相关公告可能被丢弃
+- Anthropic newsroom 的 extractor 接受"同域 + 自带日期"的顶层文章卡片：如果 Anthropic 以后在 /news/ 之外加入非文章页面但带日期，需要按实际链接复查
+- nvidia 主 feed 启用 requires_ai_filter，而 nvidia-developer 故意不启用：实测该过滤会误删开发者博客里的真实文章（Dense vs. MoE Models、BioNeMo Inference Runtime），而开发者 feed 本身没有游戏推广需要排除
+- 火山引擎（bytedance/cloud）不接入是因为新闻列表自 2025-10-15 起未更新：如果该页面恢复更新，需要重新评估并新增 extractor
+- 已标记 unsupported 的 6 个渠道（openai/developer、bytedance/cloud、moonshot/changelog、minimax/product、baidu/cloud、zhipu/developer）只是"当前没有稳定公开来源"，不是永久结论
+- OpenAI 官网对非浏览器请求返回 403，该来源正文稳定退回 RSS summary；实测 33 个来源的采集全部成功，只有正文抓取在这一家稳定失败（Phase 10.14）
 - Phase 10.13 的 5 个国内来源都只取"首页可见的那一批"，没有实现翻页：ByteDance Seed 的 ?page= 参数实测无效（每次返回同样 8 条），腾讯混元接口虽然支持 pageNum 但只请求第 1 页（pageSize=50，当前 9 条已全量），智谱 / MiniMax / 百度文心的列表页本身不提供分页；因此首次接入之前的完整历史不会被补齐，只有列表当前可见的文章能进入日报
 - 国内来源靠页面结构解析（腾讯混元是 JSON 字段）：站点改版会明确报 PageStructureError 并记为 failed，需要按新结构更新对应 extractor；这类失败不会静默降级成"今天没有新闻"
 - 媒体精选的阈值 / 上限是保守的初始值（60 / 5 / 2），需要按真实日报继续校准：如果某天媒体只有 1~2 条重要新闻，上限不会补足；如果某天官方源集体失败，媒体同样不会被自动放宽

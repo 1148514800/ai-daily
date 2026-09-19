@@ -251,6 +251,41 @@ EMPTY_HTML = {
     # A listing link with no date: the extractor returns zero entries rather
     # than reporting the page as changed.
     "minimax": "<html><body><a href=\"/blog/placeholder\"><h3>Placeholder</h3></a></body></html>",
+    # Phase 10.14's additional channels. Each keeps the structure its extractor
+    # insists on while listing nothing, so an unpublished channel succeeds with
+    # zero news instead of looking like a broken page.
+    "anthropic-research": (
+        "<html><body><a href=\"/research/placeholder\"><h3>Placeholder</h3></a>"
+        "<a href=\"/research/team/alignment\">Team</a></body></html>"
+    ),
+    "anthropic-engineering": (
+        "<html><body><a href=\"/engineering/placeholder\"><h3>Placeholder</h3></a></body></html>"
+    ),
+    "cursor-changelog": (
+        "<html><body><article><a href=\"/changelog/placeholder\"><h1>Placeholder</h1></a>"
+        "</article></body></html>"
+    ),
+    "cohere-research": (
+        "<html><body><a href=\"/research/papers/placeholder\"><h3>Placeholder</h3></a></body></html>"
+    ),
+    "tencent-cloud-ai": (
+        "<html><body><div class=\"msg-list-item\"><div class=\"msg-list-con\">"
+        "<a href=\"/announce/detail/0\">Placeholder</a></div>"
+        "<div class=\"msg-list-aside\"><span>Not a date</span></div></div></body></html>"
+    ),
+    "tencent-workbuddy": (
+        "<html><body><div class=\"vp-doc\"><h2>1.0.0 版本发布</h2>"
+        "<ul><li>Placeholder</li></ul></div></body></html>"
+    ),
+    "meta-ai-blog": (
+        "<html><body><div><a href=\"/blog/placeholder/\"><h4>Placeholder</h4></a>"
+        "<div class=\"_amdj\">No date yet</div></div></body></html>"
+    ),
+    "alibaba-model-studio": (
+        "<html><body><table><tr><th>模型类型</th><th>时间</th><th>模型 ID</th><th>功能说明</th></tr>"
+        "<tr><td>占位</td><td>待定</td><td>placeholder-model</td><td>占位说明</td></tr>"
+        "</table></body></html>"
+    ),
 }
 
 DEEPSEEK_SOURCE_ID = "deepseek"

@@ -86,6 +86,17 @@ AI_STRONG = (
     "ai data centre",
     "ai infrastructure",
     "ai vibe",
+    # --- AI-specific phrases used by the wider official channels (Phase 10.14) ---
+    #
+    # A vendor's corporate blog mixes its product marketing with its AI work, so
+    # those feeds are filtered. Measurement decided these additions: on NVIDIA's
+    # feed they recover three real AI stories ("AI factory", "Physical AI") and
+    # admit none of its GeForce NOW game promotions, which carry neither phrase.
+    # They are still model/platform vocabulary rather than company names, which
+    # is the line that keeps 腾讯 / 百度 / Google / NVIDIA out of these lists.
+    "ai factory",
+    "ai factories",
+    "physical ai",
     "prompt injection",
     "fine-tune",
     "fine-tuning",

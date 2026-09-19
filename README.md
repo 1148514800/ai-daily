@@ -4,9 +4,9 @@
 
 ## 当前开发阶段
 
-Phase 10.12 - Rich Summary + Mobile Reading Experience Optimization
+Phase 10.14 - Official Source Coverage
 
-今日 AI 新闻来自中外官方模型厂商、研究实验室与 AI 媒体的公开 RSS / 官方页面；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页是一条服务端 rank 顺序的新闻列表（**重点新闻 / 更多动态**两段，每条带 官方 / 研究 / 媒体 来源标签），可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
+今日 AI 新闻来自中外官方模型厂商、研究实验室与 AI 媒体的公开 RSS / 官方页面 —— 同一家公司可以有多个官方渠道（news / research / engineering / changelog / cloud 等，见「当前真实来源」）；GitHub 页来自官方 Trending。LLM 中文增强可选。日报、新闻正文、GitHub 项目和收藏持久化在 SQLite 中，重启后仍然存在。后端每天固定时间自动刷新。日报按**重要度排序**，首页是一条服务端 rank 顺序的新闻列表（**重点新闻 / 更多动态**两段，每条带 官方 / 研究 / 媒体 来源标签），可以按日期回看**历史日报**，也可以对**全部已收录新闻做全文搜索**。
 
 AI Daily 的定位是「每天快速理解 AI 行业变化的中文简报」，**不是 RSS 阅读器**。因此详情页是 **AI 解读页**：中文标题 / 来源 / 时间 / Topic，然后是 **发生了什么？**（150~300 字详细摘要）、**核心信息**（3~5 条要点）、**为什么重要？**（100~200 字），最后是「查看来源」跳转原始网页。**用户端不再提供原文阅读功能**（Phase 10.12 删除），但原始正文仍然保存在数据库里，用于搜索、摘要重新生成、质量评估与未来的 RAG。整套系统仍在本地 Windows 电脑上长期运行，App 打开时主动拉取最新日报，**不使用系统 Push 通知**（见 "Push 状态"）。
 
@@ -140,70 +140,138 @@ npm test
 
 ## 当前真实来源
 
-官方一手来源（`source_type=official`，去重时优先）：
+官方一手来源（`source_type=official`，去重时优先）。
 
-- OpenAI News RSS：`https://openai.com/news/rss.xml`
-- Anthropic News：`https://www.anthropic.com/news`（官方页面 HTML）
-- Google DeepMind Blog RSS：`https://deepmind.google/blog/rss.xml`
-- Meta AI（Meta Engineering AI Research RSS）：`https://engineering.fb.com/category/ai-research/feed/`
-- NVIDIA Blog RSS：`https://blogs.nvidia.com/feed/`
-- DeepSeek News：`https://api-docs.deepseek.com/news/`（官方文档站 HTML）
-- Qwen Blog RSS（Atom/`index.xml`）：`https://qwenlm.github.io/blog/index.xml`
-- Kimi Research Blog：`https://www.kimi.com/en/blog/`（官方页面 HTML）
-- Mistral AI Blog RSS：`https://mistral.ai/rss.xml`
-- Cohere Blog：`https://cohere.com/blog`（官方页面 HTML）
-- Cursor Blog：`https://cursor.com/blog`（官方页面 HTML）
+Phase 10.14 起不再假设「一个公司 = 一个来源」：每个来源都带 `organization`（公司归属）与 `channel`（官方渠道类型），一家公司可以有多个官方渠道，同一个事件仍然由 `event_dedup` 合并成一条。
 
-国内 AI 官方一手来源（Phase 10.13 新增，全部 `source_type=official`，都没有可用的 RSS，因此各自独立解析）：
+`channel` 与 `source_type` 是两件事：`source_type` 表示来源可信等级（official / research / media），`channel` 表示内容渠道（news / research / product / engineering / developer / model / security / changelog / cloud）。所以 **Anthropic Institute 是 `source_type=official` + `channel=research`** —— 它仍然是 Anthropic 自己发布的一手消息，只是发在研究院栏目。不要写成 `source_type=research`。
 
-- ByteDance Seed / 豆包：`https://seed.bytedance.com/zh/blog`（页面内嵌 `window._ROUTER_DATA` JSON，读 `article_list`；发布日期为 epoch 毫秒）
-- 腾讯混元：`https://api.hunyuan.tencent.com/api/blog/publicList`（官方公开 JSON 接口，**POST** `{pageNum, pageSize}`；`hunyuan.tencent.com/news/blog` 是客户端渲染空壳，页面上没有任何文章标记）
-- 百度文心：`https://ernie.baidu.com/index.xml`（Hugo 原生 RSS；`<link>` 是站内相对路径，靠 `base_url` 补全为绝对 URL）
-- 智谱 GLM：`https://www.zhipuai.cn/zh/news`（React Server Components flight payload 中的 `newsItems`，`category` 决定走 `/zh/news/` 还是 `/zh/research/`）
-- MiniMax：`https://www.minimax.cn/blog`（服务端渲染的 `/blog/` 卡片，卡片自带 `YYYY-MM-DD`；`minimaxi.com` 301 到该域名）
+按 organization 汇总（33 个来源 = 29 official + 2 research + 2 media）：
 
-- 五个来源都不写“万能中国网站解析器”：一个来源一个 extractor，站点改版只会让该来源报 `PageStructureError`，不会静默产出错误数据
-- 每个 extractor 都从真实页面验证过文章 URL、标题与发布时间字段，不是只把 URL 写进配置
+| Organization | Channel | Source | 采集方式 |
+| --- | --- | --- | --- |
+| openai | news | OpenAI | RSS `https://openai.com/news/rss.xml` |
+| anthropic | news | Anthropic | HTML `https://www.anthropic.com/news`（一个 Newsroom 列表，按 path 区分渠道） |
+| anthropic | research | Anthropic Research | HTML `https://www.anthropic.com/research` |
+| anthropic | engineering | Anthropic Engineering | HTML `https://www.anthropic.com/engineering` |
+| google | research | Google DeepMind | RSS `https://deepmind.google/blog/rss.xml` |
+| google | product | Google AI Blog | RSS `https://blog.google/innovation-and-ai/technology/ai/rss/` |
+| google | product | Google Gemini Blog | RSS `https://blog.google/products-and-platforms/products/gemini/rss/` |
+| google | research | Google Research | RSS `https://research.google/blog/rss/` |
+| google | cloud | Google Cloud AI | RSS `https://cloudblog.withgoogle.com/products/ai-machine-learning/rss/`（AI 过滤） |
+| meta | research | Meta AI | RSS `https://engineering.fb.com/category/ai-research/feed/` |
+| meta | research | Meta AI Blog | HTML `https://ai.meta.com/blog/` |
+| nvidia | news | NVIDIA | RSS `https://blogs.nvidia.com/feed/`（AI 过滤） |
+| nvidia | developer | NVIDIA Developer | RSS `https://developer.nvidia.com/blog/feed/` |
+| deepseek | news | DeepSeek | HTML `https://api-docs.deepseek.com/news/` |
+| alibaba | model | Qwen | RSS `https://qwenlm.github.io/blog/index.xml` |
+| alibaba | model | 阿里云百炼模型广场 | HTML `https://help.aliyun.com/zh/model-studio/newly-released-models` |
+| moonshot | news | Kimi | HTML `https://www.kimi.com/en/blog/` |
+| mistral | news | Mistral AI | RSS `https://mistral.ai/rss.xml` |
+| cohere | news | Cohere | HTML `https://cohere.com/blog` |
+| cohere | research | Cohere Research | HTML `https://cohere.com/research` |
+| cursor | news | Cursor | HTML `https://cursor.com/blog` |
+| cursor | changelog | Cursor Changelog | HTML `https://cursor.com/changelog` |
+| bytedance | model | ByteDance Seed / 豆包 | HTML `https://seed.bytedance.com/zh/blog`（页面内嵌 `window._ROUTER_DATA` JSON，读 `article_list`；发布日期为 epoch 毫秒） |
+| tencent | model | 腾讯混元 | JSON `https://api.hunyuan.tencent.com/api/blog/publicList`（官方公开接口，**POST** `{pageNum, pageSize}`；`hunyuan.tencent.com/news/blog` 是客户端渲染空壳） |
+| tencent | cloud | 腾讯云公告 | HTML `https://cloud.tencent.com/announce`（全站运维公告，AI 过滤） |
+| tencent | product | 腾讯 WorkBuddy | HTML `https://www.codebuddy.cn/docs/workbuddy/Changelog` |
+| baidu | model | 百度文心 | RSS `https://ernie.baidu.com/index.xml`（Hugo 原生 RSS；`<link>` 是站内相对路径，靠 `base_url` 补全） |
+| zhipu | news | 智谱 GLM | HTML `https://www.zhipuai.cn/zh/news`（RSC flight payload 的 `newsItems`，`category` 决定 `/zh/news/` 或 `/zh/research/`） |
+| minimax | news | MiniMax | HTML `https://www.minimax.cn/blog`（服务端渲染卡片，自带 `YYYY-MM-DD`；`minimaxi.com` 301 到该域名） |
+| huggingface | research | Hugging Face | RSS `https://huggingface.co/blog/feed.xml`（`source_type=research`） |
+| microsoft | research | Microsoft Research | RSS `https://www.microsoft.com/en-us/research/feed/`（`source_type=research`） |
+| techcrunch | news | TechCrunch AI | RSS `https://techcrunch.com/category/artificial-intelligence/feed/`（`source_type=media`） |
+| ars-technica | news | Ars Technica | RSS `https://arstechnica.com/ai/feed/`（`source_type=media`，AI 过滤） |
 
-研究来源（`source_type=research`，实验室研究而非二手报道）：
+**明确没有稳定公开来源的官方渠道**（`UNSUPPORTED_CHANNELS`，refresh 的覆盖率报告里显示为 `UNSUPPORTED`）——记录成结论，而不是留着看起来「已覆盖」：
 
-- Hugging Face Blog RSS：`https://huggingface.co/blog/feed.xml`
-- Microsoft Research Blog RSS：`https://www.microsoft.com/en-us/research/feed/`
+| Organization | Channel | 原因 |
+| --- | --- | --- |
+| openai | developer | API changelog 没有 Feed，且条目日期格式不一致 |
+| bytedance | cloud | 火山引擎新闻列表自 2025-10-15 起未更新（页面已废弃，不是「最近没更新」） |
+| moonshot | changelog | 平台 changelog 只标到月份，没有具体日期 |
+| minimax | product | 产品新闻页只有一条无日期条目 |
+| baidu | cloud | 百度智能云「更新动态」是唯一带日期的页面，且停在 2026-04-13 |
+| zhipu | developer | docs release notes 404；news 与 research 由同一个来源覆盖 |
 
-媒体来源（`source_type=media`，同一事件去重时让位于官方源）：
-
-- TechCrunch AI RSS：`https://techcrunch.com/category/artificial-intelligence/feed/`
-- Ars Technica AI RSS：`https://arstechnica.com/ai/feed/`（全站 AI 分类 Feed，进入 pipeline 前做 AI 相关性过滤）
-
-- `source_type` 只有 `official` / `research` / `media` 三种，由后端唯一决定；客户端只渲染 `官方 / 研究 / 媒体` 标签，**不根据来源名称猜类型**
-- **量子位（qbitai）已停止采集**：配置、测试与 fixture 均已删除，数据库中已有的历史新闻保持不动（`news_articles` 里的旧记录不删除，不做任何 destructive migration）
-- **本项目不使用 X / Twitter 作为新闻源**：不接 X API / Twitter API、不抓取 X 页面、不做任何预留实现
+- 13 个新渠道全部 `source_type=official`，priority 落在 42~58，仍然整体低于 research 的 60，所以「official > research > media」不变
+- **Anthropic 漏源已修复**：newsroom extractor 不再只认 `/news/`，现在接受 `/news/`、`/research/`、`/institute/`、`/engineering/`，以及同域下自带发布日期的顶层文章卡片；`/category/`、`/tag/`、`/author/`、`/research/team/` 仍然排除。不重复抓取：只请求一次 Newsroom 列表，按 path 区分 channel
+- **腾讯漏源已修复**：腾讯云 AI（`channel=cloud`）与混元（`channel=model`）是两个独立渠道，WorkBuddy 单独作为 `channel=product`。`organization=tencent` 并不代表腾讯已覆盖完整
+- **HTML 路径也有 AI 过滤**：`requires_ai_filter` 过去只对 RSS 生效，现在 HTML collector 走同一条 `_result_from_entries` 逻辑，所以腾讯云 / Google Cloud AI 这类宽泛渠道标记后真的会被过滤
+- Phase 10.14 新增 AI 强信号 `ai factory` / `ai factories` / `physical ai`：实测在 NVIDIA feed 上找回 3 条真实 AI 新闻、误收 0 条游戏推广。命中的仍然是模型 / 平台词汇，公司名（腾讯 / 百度 / 字节 / Google / NVIDIA）既不在强信号也不在弱信号里
+- 本项目不使用 X / Twitter 作为新闻源：不接 X API、不抓取 X 页面、不做任何预留实现
 - GitHub Trending 继续保持**独立逻辑**，不是 `NewsSource`：它是开发者信号，有自己的采集器、自己的 AI 筛选和自己的首页区块，不进入 dedupe / ranking / source_type
-- 优先使用官方 RSS / Atom，其次官方公开页面，最后稳定媒体 RSS
-- 只接入已确认可稳定公开采集的来源；没有稳定 Feed、且页面结构不适合轻量解析的来源不接入
+- 采集方式优先级：官方 RSS / Atom > 官方公开 JSON / API > 官方结构稳定 HTML > 其他公开官方页面
+- 只接入已确认可稳定公开采集的来源；没有稳定 Feed、且页面结构不适合轻量解析的渠道不接入
+- 不接入第三方转载、搜索结果页、微信公众号爬虫、X / Twitter 抓取、需要登录的页面或不稳定代理源
 - HTML 来源都在 `app/collectors/html.py` 中各自独立解析，任一来源失败只影响自身
 - 机器之心未接入：服务端对所有请求（含 `robots.txt` 中声明的 sitemap 与实际文章页）统一返回同一个 3251 字节的机器人拦截页，没有可用的 RSS 或文章列表
-- **AI 相关性过滤（`app/pipelines/ai_filter.py`）**：Ars Technica 是全站 AI 分类 Feed，含非 AI 报道，因此该来源标记 `requires_ai_filter=True`，在进入 issue window / dedup / ranking 之前先用确定性关键词规则过滤；判定要求证据来自**不同关键词家族**（例如 `robot` + `robotics` 属于同一家族，只算一条证据），避免一篇机器人评测靠同义词堆叠混进来。过滤只用标题与摘要，不调用 LLM
-- Phase 10.13 补入国内 AI 品牌强信号：`doubao` / `豆包` / `bytedance seed` / `seedance` / `seedream`、`hunyuan` / `腾讯混元` / `混元`、`ernie` / `文心` / `文心大模型` / `文心一言`、`glm` / `chatglm` / `智谱` / `zhipu` / `autoglm`、`minimax` / `hailuo` / `海螺`。命中的是**模型 / 产品名**，不是公司名：`百度` / `腾讯` / `字节` 既不在强信号也不在弱信号里，所以公司名本身永远不能把一篇非 AI 报道放进日报
+- 量子位（qbitai）已停止采集：配置、测试与 fixture 均已删除，数据库中已有的历史新闻保持不动（不做任何 destructive migration）
+- **AI 相关性过滤（`app/pipelines/ai_filter.py`）**：Ars Technica、NVIDIA 主 Feed、Google Cloud AI、腾讯云公告都是「宽泛渠道」，标记 `requires_ai_filter=True`，在进入 issue window / dedup / ranking 之前先用确定性关键词规则过滤；判定要求证据来自**不同关键词家族**（例如 `robot` + `robotics` 属于同一家族，只算一条证据）。过滤只用标题与摘要，不调用 LLM
+- Phase 10.13 补入国内 AI 品牌强信号：`doubao` / `豆包` / `bytedance seed` / `seedance` / `seedream`、`hunyuan` / `腾讯混元` / `混元`、`ernie` / `文心` / `文心大模型` / `文心一言`、`glm` / `chatglm` / `智谱` / `zhipu` / `autoglm`、`minimax` / `hailuo` / `海螺`。命中的是**模型 / 产品名**，不是公司名
 - 关键词边界允许**尾随数字**（`Hunyuan3D`、`混元3D`、`GLM4`、`Gemini2.5`），因为模型版本就是这么命名的；前边界仍然严格，`said` / `email` 依然不会命中 `ai`
 
 ### Source Health
 
-每次 refresh 打印一张按来源对齐的表（`app/services/source_health.py`），列为**来源名 / OK-FAIL / 数量或错误类型**：
+每次 refresh 先打印一张按来源对齐的表，再打印按公司汇总的覆盖率表（`app/services/source_health.py`）。
+
+按来源（**来源名 / 状态 / 数量或错误类型**）：
 
 ```text
 Sources
-OpenAI                 OK      1193
-Anthropic              OK      11
+OpenAI                 OK      1210
+Anthropic              OK      13
+Anthropic Research     OK      10
+Anthropic Engineering  OK      24
+Google DeepMind        OK      100
 ...
-Mistral AI             OK      86
-Cohere                 OK      22
-Microsoft Research     OK      10
-Cursor                 OK      12
-Ars Technica           OK      11
+Cursor Changelog       OK      5
+腾讯云公告                OK      3
+腾讯 WorkBuddy           OK      70
+Ars Technica           OK      13
 
 Failed: Mistral AI (timeout)
 ```
+
+按公司 / 渠道（Phase 10.14）：
+
+```text
+Official Source Coverage
+
+anthropic
+  engineering                   OK          24
+  news                          OK          13
+  research                      OK          10
+
+google
+  cloud                         OK          20
+  product (Google AI Blog)      OK          20
+  product (Google Gemini Blog)  OK          20
+  research (Google DeepMind)    OK          100
+  research (Google Research)    OK          100
+
+tencent
+  cloud                         OK          3
+  model                         OK          9
+  product                       OK          70
+
+openai
+  news                          OK          1210
+  developer                     UNSUPPORTED no stable public source
+
+official coverage: 33/39 channels OK, 6 unsupported
+```
+
+状态有四种：
+
+- `OK`：请求成功且有内容
+- `EMPTY`：请求成功，但当前窗口没有内容（「这周很安静」）
+- `FAIL`：extractor / 网络 / 结构错误（「页面结构变了」）—— 与 `EMPTY` 严格区分
+- `UNSUPPORTED`：没有稳定公开官方来源，在 `UNSUPPORTED_CHANNELS` 里带原因记录
+
+一家公司在同一个 channel 上有多个来源时（Google 有两个 product、两个 research），该行会额外标出来源名，否则同名的 channel 会出现两次而无法区分。
+
 
 - 成功时第三列是**该来源这次交出多少条有效条目**（collector 的 `valid`：标题 / URL / 时间齐全，Ars Technica 还要通过 AI 过滤）
 - 这一列**不是本次日报条数**：它在 issue window 过滤之前统计，所以 RSS 源的数字接近 Feed 全量（OpenAI 1193 表示 Feed 里有 1193 条，不代表当天日报有 1193 条）
@@ -1322,7 +1390,7 @@ uv run python -m app.jobs.backfill_article_content --date 2026-09-12
 
 ### 已知限制
 
-- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary；实测 20 个来源里只有这一个稳定失败
+- OpenAI 官网对非浏览器请求返回 403，该来源的正文会退回 RSS summary；实测 33 个来源的采集全部成功，只有正文抓取在这一家稳定失败（Phase 10.14）
 - Cohere / Cursor / Anthropic / DeepSeek / Kimi / ByteDance Seed / 智谱 GLM / MiniMax 靠页面结构解析，站点改版会明确报错（`PageStructureError`），对应来源的正文退回 RSS summary，不会静默产出垃圾正文
 - 腾讯混元读的是官方公开 JSON 接口而不是页面：接口字段变化同样会报结构错误，而不是返回空列表
 - 五个国内来源都不提供"翻页"：ByteDance Seed 的 `?page=` 参数实测无效（每次返回同样 8 条），因此每个来源只取首页可见的那一批，接入至今的完整历史需要改采集方式
@@ -1904,8 +1972,9 @@ GET /api/v1/refresh/status
 
 ## 数据来源现状
 
-- RSS / 官方页面 / 官方 JSON 接口（16 official + 2 research + 2 media，共 20 个来源）：真实，每次 refresh 逐个抓取并输出 source health
-- 其中 16 official 里有 5 个是 Phase 10.13 新增的国内厂商（ByteDance Seed / 豆包、腾讯混元、百度文心、智谱 GLM、MiniMax）
+- RSS / 官方页面 / 官方 JSON 接口（29 official + 2 research + 2 media，共 33 个来源）：真实，每次 refresh 逐个抓取并输出 source health 与 organization / channel 覆盖率
+- 其中 official 含 Phase 10.13 新增的 5 个国内厂商（ByteDance Seed / 豆包、腾讯混元、百度文心、智谱 GLM、MiniMax），以及 Phase 10.14 新增的 13 个官方渠道（Anthropic research / engineering、Cursor changelog、Cohere research、NVIDIA developer、Meta AI Blog、阿里云百炼、Google AI / Gemini / Research / Cloud AI、腾讯云 AI、腾讯 WorkBuddy）
+- 另有 6 个官方渠道经审计确认没有稳定公开来源，记为 `UNSUPPORTED`（openai/developer、bytedance/cloud、moonshot/changelog、minimax/product、baidu/cloud、zhipu/developer）
 - GitHub Trending：真实，独立的开发者信号，不是 `NewsSource`
 - LLM：可选
 - 数据存储：SQLite（`backend/data/ai_daily.db`）

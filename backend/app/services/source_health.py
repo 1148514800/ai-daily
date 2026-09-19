@@ -17,13 +17,31 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Iterable
+
+from app.config.sources import NewsSource, source_map
 
 OK = "OK"
 FAIL = "FAIL"
+# A source that answered but published nothing in this run, and a channel that
+# has no stable public surface at all. They are distinct from each other and
+# from a failure: "a quiet week" and "the page moved" are different facts, and
+# reporting both as FAIL would hide the second behind the first.
+EMPTY = "EMPTY"
+UNSUPPORTED = "UNSUPPORTED"
 
 # Working sources print first, in the order the config declares them, and the
 # failures follow together at the end of the table where they are easy to scan.
-STATUS_ORDER = {OK: 0, FAIL: 1}
+# Ordering for the per-source table: what worked, then what published nothing,
+# then what broke.
+STATUS_ORDER = {OK: 0, EMPTY: 1, FAIL: 2}
+
+# The coverage block orders organizations by how healthy their channels are, so
+# a company with a broken channel is not buried under ones that are fine.
+COVERAGE_STATUS_ORDER = {OK: 0, EMPTY: 1, FAIL: 2, UNSUPPORTED: 3}
+
+# Widest status word the coverage block pads to ("UNSUPPORTED").
+COVERAGE_STATUS_WIDTH = 12
 
 # Longest source name the column pads to; wider names simply push the columns.
 MIN_NAME_WIDTH = 18
@@ -67,10 +85,20 @@ class SourceOutcome:
     # collector's own checks and will enter the pipeline.
     valid: int = 0
     error: str | None = None
+    # Which company publishes this source and which of its official surfaces it
+    # is. Carried here so the coverage block can group by company without
+    # reaching back into the config for every row.
+    organization: str = ""
+    channel: str = "news"
 
     @property
     def status(self) -> str:
-        return OK if self.success else FAIL
+        if not self.success:
+            return FAIL
+        # A source that answered with nothing is not broken, but it is also not
+        # "working": reporting both as OK is what hides a channel that has gone
+        # quiet — or a page whose markup changed to something still parseable.
+        return EMPTY if self.valid == 0 else OK
 
     @property
     def error_type(self) -> str:
@@ -87,9 +115,9 @@ class SourceOutcome:
 
     def detail(self) -> str:
         """The third column: a count when it worked, an error type when not."""
-        if self.success:
-            return str(self.valid)
-        return self.error_type
+        if not self.success:
+            return self.error_type
+        return str(self.valid)
 
 
 @dataclass
@@ -141,14 +169,21 @@ def classify_error(error: str | None) -> str:
 def build_report(reports) -> SourceHealthReport:
     """Turn collector results into a report. Accepts any CollectResult-like row."""
     health = SourceHealthReport()
+    lookup = source_map()
     for report in reports:
+        source_id = str(getattr(report, "source_id", "") or "")
+        source = lookup.get(source_id)
         outcome = SourceOutcome(
-            source_id=str(getattr(report, "source_id", "") or ""),
+            source_id=source_id,
             name=str(getattr(report, "source_name", "") or getattr(report, "source_id", "")),
             success=bool(getattr(report, "success", False)),
             fetched=int(getattr(report, "fetched", 0) or 0),
             valid=len(getattr(report, "valid", []) or []),
             error=getattr(report, "error", None),
+            # Taken from the config rather than from the collector: a source's
+            # company and channel are properties of the source, not of one run.
+            organization=source.organization if source is not None else "",
+            channel=source.channel if source is not None else "",
         )
         health.outcomes.append(outcome)
         if not outcome.success:
@@ -167,3 +202,106 @@ def format_source_health(report: SourceHealthReport) -> str:
             + ", ".join(f"{outcome.name} ({outcome.error_type})" for outcome in failed)
         )
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class CoverageRow:
+    """One organization/channel pair and what it produced this run."""
+
+    organization: str
+    channel: str
+    status: str
+    source_name: str = ""
+    # Empty for a channel that produced nothing, or for one that is known to
+    # have no stable public source.
+    valid: int = 0
+    note: str = ""
+
+def build_coverage(
+    report: SourceHealthReport,
+    *,
+    unsupported: Iterable[tuple[str, str]] = (),
+) -> list[CoverageRow]:
+    """Group a run's outcomes by organization, then by channel.
+
+    The per-source table answers "did this feed work"; this answers the question
+    the phase is actually about — is a company covered on more than one official
+    surface, and which of its channels is quiet or broken.
+
+    ``unsupported`` carries the channels that have no stable public source at
+    all, so the report states those explicitly instead of leaving a company
+    looking fully covered because nothing failed.
+    """
+    rows = [
+        CoverageRow(
+            organization=outcome.organization or "unknown",
+            channel=outcome.channel or "news",
+            status=outcome.status,
+            source_name=outcome.name,
+            valid=outcome.valid,
+        )
+        for outcome in report.outcomes
+    ]
+    for organization, channel in unsupported:
+        rows.append(
+            CoverageRow(
+                organization=organization,
+                channel=channel,
+                status=UNSUPPORTED,
+                note="no stable public source",
+            )
+        )
+    rows.sort(
+        key=lambda row: (
+            row.organization,
+            COVERAGE_STATUS_ORDER.get(row.status, 9),
+            row.channel,
+        )
+    )
+    return rows
+
+
+def format_official_coverage(rows: list[CoverageRow]) -> str:
+    """The organization/channel view of one run, grouped by company."""
+    if not rows:
+        return "Official Source Coverage"
+    # One company can legitimately have two sources on the same kind of channel
+    # (Google publishes two product blogs and two research blogs), so those rows
+    # name the source as well; without it the block would print the same channel
+    # twice with different counts and no way to tell them apart.
+    counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        key = (row.organization, row.channel)
+        counts[key] = counts.get(key, 0) + 1
+    # The label is per row, not per channel: two sources of one company on the
+    # same channel need their own names, and keying by channel would leave both
+    # rows showing whichever name was written last.
+    labels = [
+        f"{row.channel} ({row.source_name})"
+        if counts[(row.organization, row.channel)] > 1 and row.source_name
+        else row.channel
+        for row in rows
+    ]
+    channel_width = max(len(label) for label in labels) + 2
+    lines = ["Official Source Coverage"]
+    organization = None
+    for row, label in zip(rows, labels):
+        if row.organization != organization:
+            organization = row.organization
+            lines.append("")
+            lines.append(organization)
+        lines.append(
+            f"  {label.ljust(channel_width)}"
+            f"{row.status.ljust(COVERAGE_STATUS_WIDTH)}{row.note or row.valid}"
+        )
+    return "\n".join(lines)
+
+
+def coverage_summary(rows: list[CoverageRow]) -> str:
+    """One line: how many channels are OK, and how many are not OK."""
+    ok = sum(1 for row in rows if row.status == OK)
+    unsupported = sum(1 for row in rows if row.status == UNSUPPORTED)
+    return (
+        f"official coverage: {ok}/{len(rows)} channels OK"
+        f", {unsupported} unsupported"
+    )

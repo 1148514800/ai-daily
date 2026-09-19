@@ -22,9 +22,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlsplit
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 import httpx
 
@@ -36,6 +36,7 @@ from app.collectors.http import (
 )
 from app.collectors.raw import CollectResult, RawArticle
 from app.config.sources import NewsSource
+from app.pipelines.ai_filter import is_ai_related
 from app.pipelines.normalize import news_item_from_raw
 from app.pipelines.urls import canonicalize_url
 
@@ -48,6 +49,67 @@ BYTEDANCE_SEED_BASE = "https://seed.bytedance.com"
 HUNYUAN_BASE = "https://hunyuan.tencent.com"
 ZHIPU_BASE = "https://www.zhipuai.cn"
 MINIMAX_BASE = "https://www.minimax.cn"
+TENCENT_CLOUD_BASE = "https://cloud.tencent.com"
+WORKBUDDY_BASE = "https://www.codebuddy.cn"
+META_AI_BASE = "https://ai.meta.com"
+ALIBABA_MODEL_STUDIO_BASE = "https://help.aliyun.com"
+
+# 阿里云's catalogue identifies a model's family in its id prefix; the brand is
+# used to make the headline readable in Chinese, and an unknown prefix simply
+# leaves the id alone. Matched as a prefix because the family carries a version
+# in the id itself (``qwen3.8-max-0902``), so an exact-id lookup would miss
+# most rows.
+ALIBABA_MODEL_BRANDS = (
+    ("qwen", "通义千问"),
+    ("wan", "通义万相"),
+    ("happyoyster", "HappyOyster"),
+)
+
+# Anthropic publishes on several paths from one newsroom page. Restricting the
+# extractor to ``/news/`` is what hid the institute essay that started this
+# phase, so every path the newsroom actually links to is accepted. The list is
+# explicit rather than "any same-host link" so navigation, topic and author
+# pages cannot slip in as articles.
+ANTHROPIC_ARTICLE_PREFIXES = ("/news/", "/research/", "/institute/", "/engineering/")
+# Paths under those prefixes that are index pages rather than articles.
+ANTHROPIC_INDEX_SEGMENTS = ("/research/team/",)
+
+# Anthropic's research index dates its cards the same way its newsroom does; the
+# engineering blog prints the date in a div instead of a <time>, and its
+# featured card carries no date at all.
+ANTHROPIC_ENGINEERING_PREFIX = "/engineering/"
+ANTHROPIC_RESEARCH_PREFIX = "/research/"
+
+# Meta's AI blog ships hashed CSS-module classes, so cards are found by
+# structure: a date element, and the nearest ancestor holding one article link.
+META_AI_ARTICLE_RE = re.compile(r"^(?:https://ai\.meta\.com)?/blog/[^/]+/?$")
+META_AI_DATE_RE = re.compile(r"^[A-Z][a-z]+ \d{1,2}, \d{4}$")
+# Card labels that are not headlines: the featured card tags itself "FEATURED"
+# on an anchor that points at the same article as its headline.
+META_AI_SKIP_LABELS = re.compile(r"(?i)^(featured|learn more|read more|watch|see more|read)$")
+
+# Cursor's changelog is a list of <article> blocks, each with an ISO <time> and
+# a heading whose anchor is the release's own permalink.
+CURSOR_CHANGELOG_PREFIX = "/changelog/"
+
+# Cohere's research index carries no <time>; the publish date is the tail of
+# each paper's slug ("...-2026-09-10").
+COHERE_PAPER_PREFIX = "/research/papers/"
+COHERE_SLUG_DATE_RE = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
+
+# 腾讯云's announcement list: one dated row per notice.
+TENCENT_CLOUD_ARTICLE_PREFIX = "/announce/detail/"
+TENCENT_CLOUD_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
+
+# 腾讯 WorkBuddy's changelog is one page whose releases are <h2> headings, each
+# carrying its date in the heading text ("5.5.6 版本发布 🚀（2026-09-10）").
+WORKBUDDY_HEADING_RE = re.compile(r"[（(](\d{4}-\d{2}-\d{2})[）)]\s*$")
+
+# 阿里云百炼's model catalogue renders its releases as dated table rows:
+# 模型类型 / 时间 / 模型 ID / 功能说明. Rows have neither an id nor an anchor, so
+# the model id is what names and identifies one.
+ALIBABA_MODEL_ROW_MIN_CELLS = 4
+ALIBABA_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # Cohere prints the publish date in an "eyebrow" line above each card: a
 # <p> whose whole text is the date. Anchoring on the element rather than on a
@@ -103,6 +165,8 @@ class PageStructureError(Exception):
     """The page loaded but no longer contains the listing being parsed."""
 
 
+
+
 def parse_english_date(raw: str) -> datetime | None:
     text = " ".join(str(raw).split())
     for fmt in ENGLISH_DATE_FORMATS:
@@ -111,6 +175,19 @@ def parse_english_date(raw: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def parse_iso_date(raw: str) -> datetime | None:
+    """A plain ``YYYY-MM-DD`` publish date, read as UTC midnight.
+
+    Several sources date a release by its day alone, with no clock time and no
+    offset. Reading that as UTC midnight is the same convention the other
+    collectors use for a day-only date.
+    """
+    try:
+        return datetime.strptime(str(raw).strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _unescape_payload(raw: str) -> str:
@@ -151,30 +228,158 @@ def _extract_json_array(text: str, start: int) -> str | None:
     return None
 
 
+def _anthropic_article_href(anchor: Tag) -> bool:
+    """Whether an Anthropic card is an article rather than an index page.
+
+    The newsroom links to ``/news/`` posts and to ``/institute/``, ``/research/``
+    and ``/engineering/`` essays from the same page, and all of them are
+    Anthropic's own announcements, so all of them are collected. A few posts sit
+    at the top level instead (``/claude-fable-and-mythos-5-1``); those are
+    recognised structurally, by the card carrying its own publish date, which
+    navigation and section links never do.
+    """
+    text = str(anchor.get("href") or "").strip()
+    if not text:
+        return False
+    # Some cards publish the absolute URL, so compare on the path only.
+    path = urlsplit(text).path if text.startswith("http") else text
+    if not path.startswith("/"):
+        return False
+    if any(segment in path for segment in ANTHROPIC_INDEX_SEGMENTS):
+        return False
+    if path.startswith(ANTHROPIC_ARTICLE_PREFIXES):
+        return True
+    return _anthropic_card_date(anchor) is not None
+
+
+def _anthropic_title(anchor: Tag) -> str:
+    """The headline of an Anthropic card, from its heading or title element."""
+    heading = anchor.find(["h1", "h2", "h3", "h4", "h5", "h6"])
+    if heading is not None:
+        title = " ".join(heading.get_text(" ", strip=True).split())
+        if title:
+            return title
+    title_el = anchor.select_one('[class*="title"]')
+    if title_el is not None:
+        return " ".join(title_el.get_text(" ", strip=True).split())
+    return ""
+
+
 def anthropic_entries(html: str) -> list[tuple[str, str, datetime]]:
-    """Anthropic news index: every card is an ``/news/`` link with a ``<time>``."""
+    """Anthropic's newsroom: every article card, whatever its path.
+
+    The page mixes two card shapes — a featured grid whose meta block holds a
+    ``<time>``, and a publication list whose rows do the same — plus an
+    engineering-style list that prints the date in a plain element. Anchoring on
+    ``<time>`` when it exists and falling back to any element whose whole text
+    is a date covers both without depending on hashed class names.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    anchors = soup.select('a[href^="/news/"]')
+    anchors = [
+        anchor
+        for anchor in soup.find_all("a", href=True)
+        if _anthropic_article_href(anchor)
+    ]
     if not anchors:
-        raise PageStructureError("no /news/ links on the Anthropic index")
+        raise PageStructureError("no article links on the Anthropic newsroom")
 
     entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
     for anchor in anchors:
-        time_el = anchor.find("time")
-        if time_el is None:
-            continue
-        published = parse_english_date(time_el.get_text(" ", strip=True))
+        published = _anthropic_card_date(anchor)
         if published is None:
             continue
-        heading = anchor.find(["h1", "h2", "h3", "h4", "h5", "h6"])
-        if heading is not None:
-            title = heading.get_text(" ", strip=True)
-        else:
-            title_el = anchor.select_one('[class*="title"]')
-            title = title_el.get_text(" ", strip=True) if title_el is not None else ""
+        title = _anthropic_title(anchor)
         if not title:
             continue
-        entries.append((urljoin(ANTHROPIC_BASE, anchor["href"]), title, published))
+        url = urljoin(ANTHROPIC_BASE, str(anchor["href"]))
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def _anthropic_card_date(anchor: Tag) -> datetime | None:
+    """The publish date of one Anthropic card, or None when it has none."""
+    time_el = anchor.find("time")
+    if time_el is not None:
+        published = parse_english_date(time_el.get_text(" ", strip=True))
+        if published is not None:
+            return published
+    # The engineering list prints the date in a div of its own; the whole
+    # element text being a date is what identifies it, which a restyle cannot
+    # silently break into a different meaning.
+    for element in anchor.find_all(["time", "div", "span", "p"]):
+        text = " ".join(element.get_text(" ", strip=True).split())
+        if not text or not ENGLISH_DATE_RE.fullmatch(text):
+            continue
+        published = parse_english_date(text)
+        if published is not None:
+            return published
+    return None
+
+
+def anthropic_engineering_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Anthropic's engineering blog: dated article cards, one featured undated.
+
+    The featured card carries no date at all, so it is skipped rather than
+    guessed at — the same rule the other listing extractors use.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    anchors = [
+        anchor
+        for anchor in soup.select(f'a[href^="{ANTHROPIC_ENGINEERING_PREFIX}"]')
+        if _is_article_path(str(anchor.get("href") or ""), ANTHROPIC_ENGINEERING_PREFIX)
+    ]
+    if not anchors:
+        raise PageStructureError("no /engineering/ links on the Anthropic blog")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for anchor in anchors:
+        published = _anthropic_card_date(anchor)
+        if published is None:
+            continue
+        title = _anthropic_title(anchor)
+        if not title:
+            continue
+        url = urljoin(ANTHROPIC_BASE, str(anchor["href"]))
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def anthropic_research_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Anthropic's research index, without its team pages."""
+    soup = BeautifulSoup(html, "html.parser")
+    anchors = [
+        anchor
+        for anchor in soup.select(f'a[href^="{ANTHROPIC_RESEARCH_PREFIX}"]')
+        if _is_article_path(str(anchor.get("href") or ""), ANTHROPIC_RESEARCH_PREFIX)
+    ]
+    if not anchors:
+        raise PageStructureError("no /research/ links on the Anthropic research index")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for anchor in anchors:
+        published = _anthropic_card_date(anchor)
+        if published is None:
+            continue
+        title = _anthropic_title(anchor)
+        if not title:
+            continue
+        url = urljoin(ANTHROPIC_BASE, str(anchor["href"]))
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
     return entries
 
 
@@ -621,21 +826,388 @@ def _iso_datetime(raw: str) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def cursor_changelog_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Cursor's changelog: one ``<article>`` per release, dated by its ``<time>``.
+
+    Features often ship here and nowhere else, so this channel exists to make
+    them reachable. Each release links to its own permalink, so an entry is a
+    real page rather than an anchor on a shared list.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    articles = soup.find_all("article")
+    if not articles:
+        raise PageStructureError("no articles on the Cursor changelog")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for article in articles:
+        time_el = article.find("time")
+        if time_el is None:
+            continue
+        published = _iso_datetime(str(time_el.get("datetime") or ""))
+        if published is None:
+            published = parse_english_date(time_el.get_text(" ", strip=True))
+        if published is None:
+            continue
+        anchors = [
+            candidate
+            for candidate in article.find_all("a", href=True)
+            if _is_article_path(str(candidate["href"]), CURSOR_CHANGELOG_PREFIX)
+        ]
+        if not anchors:
+            continue
+        # The release's own heading carries the title; the same href also
+        # appears on an anchor that wraps only the date, so the date must not be
+        # taken for a headline. Longest text wins, which prefers the heading.
+        titled = [a for a in anchors if not ENGLISH_DATE_RE.fullmatch(_element_text(a))]
+        anchor = max(titled or anchors, key=lambda a: len(_element_text(a)))
+        title = _element_text(anchor)
+        if not title or ENGLISH_DATE_RE.fullmatch(title):
+            title = (
+                str(anchor["href"]).rstrip("/").rsplit("/", 1)[-1].replace("-", " ").strip()
+            )
+        if not title:
+            continue
+        url = urljoin(CURSOR_BASE, str(anchor["href"]))
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def cohere_research_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Cohere's research index: each paper's date ends its own slug.
+
+    The cards carry no ``<time>`` (the date is printed in prose), but the slug
+    is machine-stable: ``...-2026-09-10``. Reading the date from the permalink
+    rather than from the label means a restyle cannot move it.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    anchors = soup.select(f'a[href^="{COHERE_PAPER_PREFIX}"]')
+    if not anchors:
+        raise PageStructureError("no /research/papers/ links on the Cohere research page")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for anchor in anchors:
+        href = str(anchor.get("href") or "").strip()
+        match = COHERE_SLUG_DATE_RE.search(href)
+        if match is None:
+            continue
+        published = parse_iso_date(match.group(1))
+        if published is None:
+            continue
+        title = " ".join(anchor.get_text(" ", strip=True).split())
+        if not title:
+            continue
+        url = urljoin(COHERE_BASE, href)
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def tencent_cloud_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """腾讯云's announcement list: one dated row per notice.
+
+    The list is a wide operations feed, so it is filtered by AI relevance
+    afterwards; rows keep their title, their own ``/announce/detail/`` link and
+    the timestamp printed beside them.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select("div.msg-list-item")
+    if not rows:
+        raise PageStructureError("no announcement rows on the Tencent Cloud list")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for row in rows:
+        anchor = row.find("a", href=True)
+        if anchor is None:
+            continue
+        href = str(anchor["href"]).strip()
+        if not href.startswith(TENCENT_CLOUD_ARTICLE_PREFIX):
+            continue
+        title = " ".join(anchor.get_text(" ", strip=True).split())
+        if not title:
+            continue
+        published = _tencent_cloud_date(row)
+        if published is None:
+            continue
+        url = urljoin(TENCENT_CLOUD_BASE, href)
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def _tencent_cloud_date(row: Tag) -> datetime | None:
+    """The ``YYYY-MM-DD HH:MM:SS`` an announcement row prints beside its title."""
+    for element in row.find_all(["span", "div", "p", "time"]):
+        text = " ".join(element.get_text(" ", strip=True).split())
+        match = TENCENT_CLOUD_DATE_RE.fullmatch(text)
+        if match is None:
+            continue
+        try:
+            moment = datetime.strptime(f"{match.group(1)} {match.group(2)}", "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        return moment.replace(tzinfo=timezone.utc)
+    return None
+
+
+def tencent_workbuddy_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """腾讯 WorkBuddy's changelog: ``<h2>`` release headings carrying their date.
+
+    Every release lives on one page and has no permalink of its own, so the
+    entry's URL is the changelog plus the heading's fragment. The fragment is
+    part of the URL on purpose: it is what makes two releases two entries
+    instead of one, and it lands the reader on the right section.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    headings = soup.find_all(["h2", "h3"])
+    if not headings:
+        raise PageStructureError("no release headings on the WorkBuddy changelog")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for heading in headings:
+        text = _clean_heading(heading.get_text(" ", strip=True))
+        match = WORKBUDDY_HEADING_RE.search(text)
+        if match is None:
+            continue
+        published = parse_iso_date(match.group(1))
+        if published is None:
+            continue
+        title = text[: match.start()].strip(" 　·-—–")
+        if not title:
+            continue
+        # A release has no permalink of its own, so the version becomes a query
+        # value. A fragment would scroll to the right section but is stripped
+        # when a URL is canonicalized, which would collapse all seventy
+        # releases into one entry; a query value is kept and is still a URL the
+        # changelog answers.
+        version = title.split()[0] if title.split() else ""
+        url = f"{WORKBUDDY_BASE}/docs/workbuddy/Changelog"
+        if version:
+            url = f"{url}?release={quote(version, safe='')}"
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def _element_text(value: object) -> str:
+    """An element's text as one whitespace-collapsed line."""
+    return " ".join(str(value.get_text(" ", strip=True) if isinstance(value, Tag) else value or "").split())
+
+
+def _clean_heading(value: object) -> str:
+    """A heading's text with its anchors and zero-width padding removed."""
+    text = " ".join(str(value or "").replace("\u200b", " ").split())
+    return text.strip()
+
+
+def alibaba_model_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """阿里云百炼's newly released models: one dated row per model.
+
+    The catalogue is a set of tables whose rows are 模型类型 / 时间 / 模型 ID /
+    功能说明. The model id is the row's identity, so the entry's URL carries it
+    as a query value: the rows have no anchor of their own, and without that the
+    whole table would collapse to one URL and one entry.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+    if not tables:
+        raise PageStructureError("no tables on the Alibaba Model Studio catalogue")
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for table in tables:
+        for row in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+            if len(cells) < ALIBABA_MODEL_ROW_MIN_CELLS:
+                continue
+            if not ALIBABA_DATE_RE.match(cells[1]):
+                continue
+            published = parse_iso_date(cells[1])
+            if published is None:
+                continue
+            model_id = cells[2].strip()
+            if not model_id:
+                continue
+            title = _alibaba_row_title(cells)
+            # The fourth column describes what the model does. It is carried as
+            # the summary because this page is a repeated catalogue that body
+            # extraction rejects, so this is the only text the digest can use.
+            summary = " ".join(cells[3].split())
+            url = (
+                f"{ALIBABA_MODEL_STUDIO_BASE}/zh/model-studio/newly-released-models"
+                f"?model={quote(model_id, safe='')}"
+            )
+            canonical = canonicalize_url(url)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            entries.append((url, title, published, summary))
+    return entries
+
+
+def _alibaba_row_title(cells: list[str]) -> str:
+    """A catalogue row's headline: the model id and what it is for."""
+    model_id = cells[2].strip()
+    model_type = cells[0].strip()
+    lowered = model_id.lower()
+    brand = next(
+        (label for prefix, label in ALIBABA_MODEL_BRANDS if lowered.startswith(prefix)),
+        "",
+    )
+    name = f"{brand} {model_id}".strip() if brand else model_id
+    if model_type and model_type != model_id:
+        return f"{name}（{model_type}）"
+    return name
+
+
+def meta_ai_entries(html: str) -> list[tuple[str, str, datetime]]:
+    """Meta's AI blog: dated cards whose class names are hashed and unstable.
+
+    The markup is a CSS-module soup (``_amdj``, ``_8xkp``), so the card is
+    defined structurally instead: an element whose whole text is a date, and the
+    nearest ancestor holding exactly one blog article link. A restyle that keeps
+    the layout keeps working; one that removes the date stops the source rather
+    than silently dating an article wrongly.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    if not soup.find("a", href=True):
+        raise PageStructureError("no links at all on the Meta AI blog")
+    # A card is found from its date, exactly as Cohere's is: walk up to the
+    # nearest ancestor that links to one article and no other. Grouping anchors
+    # by URL instead would span the whole page, because a "Learn More" control
+    # in one card and a headline in another share an ancestor with many links.
+    date_elements = [
+        element
+        for element in soup.find_all(["p", "span", "div", "time"])
+        if META_AI_DATE_RE.match(_element_text(element))
+    ]
+
+    entries: list[tuple[str, str, datetime]] = []
+    seen: set[str] = set()
+    for element in date_elements:
+        published = parse_english_date(_element_text(element))
+        if published is None:
+            continue
+        card = _meta_card(element)
+        if card is None:
+            continue
+        href, title = card
+        url = urljoin(META_AI_BASE, href)
+        canonical = canonicalize_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append((url, title, published))
+    return entries
+
+
+def _meta_is_article(anchor: Tag) -> bool:
+    """Whether a link on Meta's blog points at an article rather than a listing."""
+    href = str(anchor.get("href") or "").strip()
+    if not href:
+        return False
+    path = urlsplit(href).path if href.startswith("http") else href
+    return bool(META_AI_ARTICLE_RE.match(path))
+
+
+def _meta_card(date_el: Tag) -> tuple[str, str] | None:
+    """The article one Meta AI card points at, plus its headline.
+
+    The card boundary is "the nearest ancestor linking to exactly one article",
+    which is a property of the layout rather than of the hashed class names.
+    Every anchor in that container pointing at that article contributes a label,
+    and the longest one that is not a control ("Learn More", "FEATURED") is the
+    headline.
+    """
+    node: Tag | None = date_el
+    for _ in range(8):
+        node = node.parent if node is not None else None
+        if node is None or node.name in {"body", "html"}:
+            return None
+        hrefs: dict[str, str] = {}
+        for anchor in node.find_all("a", href=True):
+            if not _meta_is_article(anchor):
+                continue
+            href = str(anchor["href"]).strip()
+            hrefs.setdefault(canonicalize_url(urljoin(META_AI_BASE, href)), href)
+        if len(hrefs) != 1:
+            continue
+        href = next(iter(hrefs.values()))
+        labels = [
+            _element_text(anchor)
+            for anchor in node.find_all("a", href=True)
+            if canonicalize_url(urljoin(META_AI_BASE, str(anchor["href"]).strip()))
+            == canonicalize_url(urljoin(META_AI_BASE, href))
+        ]
+        usable = [label for label in labels if label and not META_AI_SKIP_LABELS.fullmatch(label)]
+        # The list cards put the headline in a heading beside the link rather
+        # than inside it, so a heading in the same card wins; the link's own
+        # label is the fallback, and the slug the last resort.
+        headings = [
+            _element_text(heading)
+            for heading in node.find_all(["h1", "h2", "h3", "h4"])
+        ]
+        headings = [text for text in headings if text]
+        title = (
+            max(headings, key=len)
+            if headings
+            else max(usable, key=len)
+            if usable
+            else href.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
+        )
+        return href, title.strip()
+    return None
+
+
 def _result_from_entries(
     source: NewsSource,
     entries: list[tuple[str, str, datetime]],
     *,
     fetched: int,
 ) -> CollectResult:
+    """Turn extractor rows into the collector's result.
+
+    A row is ``(url, title, published_at)``; a listing that also carries a short
+    description may add a fourth element, which becomes the article's summary.
+    That matters for a catalogue-shaped source (阿里云百炼's model list), whose
+    own page is a huge repeated table that body extraction rejects: without the
+    description the digest would see a bare model id and nothing else.
+    """
     result = CollectResult(source_id=source.id, source_name=source.name)
     result.fetched = fetched
     seen: set[str] = set()
-    for url, title, published in entries:
+    for entry in entries:
+        url, title, published = entry[0], entry[1], entry[2]
+        summary = str(entry[3]).strip() if len(entry) > 3 and entry[3] else ""
         canonical = canonicalize_url(url)
         if canonical in seen:
             result.skipped += 1
             continue
         seen.add(canonical)
+        # A wide official feed (Tencent Cloud's operational announcements, say)
+        # is filtered here, before the entry can reach the window, dedupe or the
+        # LLM. Counted as skipped rather than as an error: dropping the non-AI
+        # part of a feed is the source working correctly. The RSS path applies
+        # the same rule to the same flag.
+        if source.requires_ai_filter and not is_ai_related(title, summary):
+            result.skipped += 1
+            continue
         raw = RawArticle(
             source_id=source.id,
             source=source.name,
@@ -644,7 +1216,7 @@ def _result_from_entries(
             url=url,
             canonical_url=canonical,
             published_at=published,
-            summary="",
+            summary=summary,
         )
         result.valid.append(raw)
         result.news_items.append(news_item_from_raw(raw))
@@ -656,14 +1228,30 @@ def parse_html_page(source: NewsSource, *, index_html: str, page_html: str | Non
     try:
         if source.id == "anthropic":
             entries = anthropic_entries(index_html)
+        elif source.id == "anthropic-research":
+            entries = anthropic_research_entries(index_html)
+        elif source.id == "anthropic-engineering":
+            entries = anthropic_engineering_entries(index_html)
         elif source.id == "kimi":
             entries = kimi_entries(index_html)
         elif source.id == "deepseek":
             entries = deepseek_entries(page_html or index_html)
         elif source.id == "cohere":
             entries = cohere_entries(index_html)
+        elif source.id == "cohere-research":
+            entries = cohere_research_entries(index_html)
         elif source.id == "cursor":
             entries = cursor_entries(index_html)
+        elif source.id == "cursor-changelog":
+            entries = cursor_changelog_entries(index_html)
+        elif source.id == "tencent-cloud-ai":
+            entries = tencent_cloud_entries(index_html)
+        elif source.id == "tencent-workbuddy":
+            entries = tencent_workbuddy_entries(index_html)
+        elif source.id == "alibaba-model-studio":
+            entries = alibaba_model_entries(index_html)
+        elif source.id == "meta-ai-blog":
+            entries = meta_ai_entries(index_html)
         elif source.id == "bytedance-seed":
             entries = bytedance_seed_entries(index_html)
         elif source.id == "tencent-hunyuan":

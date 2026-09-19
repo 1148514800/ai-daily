@@ -15,6 +15,12 @@ from app.services.media_selection import (
 from app.services.news_ranker import format_ranking, ranking_debug_enabled
 from app.services.github_store import GitHubRefreshStats, RepoDecision, github_store
 from app.services.source_health import build_report, format_source_health
+from app.services.source_health import (
+    build_coverage,
+    coverage_summary,
+    format_official_coverage,
+)
+from app.config.sources import unsupported_channels
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
 EXTRACTION_DEBUG_ENV = "AI_DAILY_DEBUG_EXTRACTION"
@@ -113,6 +119,14 @@ def main() -> None:
     for report in reports:
         if report.error:
             print(f"Error ({report.source_name}): {report.error}")
+
+    # Which company is covered on which of its own official surfaces, and which
+    # channels are quiet, broken or have no stable source at all.
+    coverage = build_coverage(health, unsupported=unsupported_channels())
+    print()
+    print(format_official_coverage(coverage))
+    print()
+    print(coverage_summary(coverage))
 
     # The funnel: collected -> inside the issue window -> one row per URL.
     print(f"Fetched: {store.last_fetched_count}")
