@@ -343,6 +343,9 @@ Phase 10.10 安全机制:
 - scripts/check_backend.ps1（uv run pytest + release_check）与 scripts/check_mobile.ps1（tsc --noEmit + npm test + expo export），失败时非 0 退出
 - Android SDK 实际位于 F:\software\Sdk，JDK 位于 F:\software\JDK\jdk-22；ANDROID_HOME / ANDROID_SDK_ROOT / JAVA_HOME 未持久化，脚本只在自身进程内设置，不改系统环境
 
+- 新增 Web Search 能力诊断脚本 `app/jobs/test_web_search.py`（`uv run python -m app.jobs.test_web_search`）：复用现有 LLM 配置探测 `POST {LLM_BASE_URL}/responses` + `{"type": "web_search"}`，只在响应里真的有 web_search_call / URL citation 时才判 PASS（只到 200 不算）
+- 诊断脚本不写数据库、不改 schema、不发 RSS、不用现有 LLMClient（/chat/completions 那条链路保持原样），输出 BASE_URL / MODEL / HTTP status / 搜索证据 / 模型文本 / 最终结论，从不打印 API Key
+
 Known Issues:
 - Phase 10.14 的 organization / channel 是来源配置的静态属性，没有写进数据库：debug 输出与 health 报告能看到公司覆盖，但已入库的历史新闻无法按 organization 反查（需要时从 source 名称映射）
 - Official Source Coverage 只在 refresh 进程中构建，不持久化：看不到"某个 channel 连续 N 天为 0"的趋势。判断"最近真没更新"还是"结构悄悄变了"目前仍靠人工对比 EMPTY 与 FAIL
@@ -411,3 +414,6 @@ Known Issues:
 - 数据库 schema 变更依赖 create_all() + 轻量 ADD COLUMN 补列，仍无迁移框架
 - 收藏为单用户模型，没有登录与多设备同步
 - 开发环境 CORS 允许所有来源，仅限 development
+
+- 当前配置的 LLM 服务商（LLM_BASE_URL 指向的网关 + deepseek-v4.1-flash）实测 **不具备真实联网搜索能力**：`/responses` 返回 HTTP 200 且 `{"type": "web_search"}` 被静默忽略，响应里没有 web_search_call、没有 url_citation，模型的回答直接说「我没有可用的实时网页搜索工具」（`GET /v1/models` 也没有声明任何 tool / search 能力）。结论是 UNKNOWN（请求成功但无搜索证据），不能当成支持联网
+- 因此日报不要指望靠 LLM 联网补实时信息：RSS / 官方渠道采集仍是唯一事实来源，这个前提在换服务商之前不会变。换到别家（或该网关新增搜索支持）时重跑 `app/jobs/test_web_search.py` 再判断，脚本里明确不猜测、不模拟联网
