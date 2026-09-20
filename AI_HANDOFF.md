@@ -89,6 +89,21 @@ Completed:
 - API Key 只来自环境变量 `BAIDU_SEARCH_API_KEY`（`backend/.env.example` 已加注释占位），从不打印、不写日志、不写测试、不进 Git
 - 探测脚本单测 `tests/test_baidu_search_probe.py`（67 条）全部 mock HTTP，覆盖正常 200 / 多条结果 / 空结果 / 无结果列表 / 缺字段 / 无 URL 条目 / 400 / 401 / 403 / 429 / 500 / 非 JSON / timeout / connection error / URL 去重 / known 与 unknown domain / page_time 各格式 / 过去 24 小时边界 / API Key 缺失，pytest 绝不真实消耗百度额度
 
+- 新增阿里云 CleverSee Web Search 探测脚本 `app/jobs/test_aliyun_search.py`（`uv run python -m app.jobs.test_aliyun_search`）：调用 CleverSee 统一搜索接口 `POST https://cloud-iqs.aliyuncs.com/search/unified`，`engineType=CNLiteBasic`，`contents` 只开 `rerankScore`（`mainText` / `markdownText` / `summary` 全部关闭，**不使用 CleverSee 的 AI 摘要**，它是收费项且不属于发现信号），用同一套 10 条 Query Pool 与百度 probe 做同条件对照（Phase 10.15）
+- 两个 probe 共用同一批规则，**不复制第二套**：Query Pool、`probe_date_range`（昨天..今天，按 APP_TIMEZONE 运行时计算）、`parse_page_time` / `PublishTime`、`is_within_last_24h`、`canonicalize_url`、`is_known_source_domain`、`print_top_domains` 全部从 `app/jobs/test_baidu_search.py` import；复制这些规则必然产生偏差，而偏差正好是「对照」最不能容忍的东西
+- 未使用 `excludeSites`：第一轮必须看到原始召回，否则拿百度对比的是「过滤器」而不是「引擎」。`includeSites` 同理未用（那会向另一个方向收窄召回）
+- 字段名以官方文档为准：结果列表是 `pageItems`，地址字段是 `link`；**`hostname` 是站点名（如「云栖大会」）而不是域名**，因此所有域 / known 判断 / 去重都从 `link` 解析 hostname，站点名只用于显示 —— 直接用 `hostname` 当域名会让下游每一个计数都错
+- `advancedParams` 是 `map<string, string>`，`numResults` 必须传字符串（文档范围 1-50，本轮用 10，与百度 top_k 对齐）；`startPublishedDate` / `endPublishedDate` 与百度 `page_time` 同一日期范围
+- 每条结果解析 title / link / hostname / publishedTime / snippet / rerankScore / tags，允许字段缺失：缺 title 就空标题、缺 publishedTime 记未知、缺 tags 留空 map，都不丢整条响应；只有完全没有 URL 的条目会被丢弃并计数（`N without a URL, skipped`）
+- `tags` 保留并逐条打印（含 `tags.genre`，如 NewsPortal / Blog / ForumUgc / Social / VideoSite / Encyclopedia / Commerce）：`normalize_tags` 把值统一转成字符串（`isUgc` 是字符串 "true"），未知 key 也保留（丢掉会掩盖字段改名），缺席不当作任何证据 —— 文档明确 tags 覆盖率约 89% 且可能整批为空，所以第一阶段不依赖它做任何正式判断
+- 新增 Source Quality 汇总（**仅 probe 分析用**）：Official/company domains、Professional media、GitHub/arXiv、Portal/repost、UGC/blog、Unknown 六桶按固定顺序打印；桶内判定顺序是「项目已配置 SOURCES -> 门户转载 -> UGC -> 研究站 -> 专业媒体 -> 引擎 isUgc 标签 -> Unknown」，引擎标签放最后是因为文档说它不完整。这些桶不写入 `app/config/sources.py`，也不改变任何 `source_type`，业务代码不得依赖
+- 新增「二手来源观察名单」统计（不排除、只计数）：baijiahao.baidu.com / 163.com / zhuanlan.zhihu.com / blog.csdn.net / sohu.com / sina.com.cn / xueqiu.com，按名单项归并（`m.163.com` 计入 `163.com`），输出 watched total N of M unique results
+- 输出结构在百度 probe 基础上保留 SUMMARY（Engine / Queries / Successful / Failed / Raw / Unique / Duplicate / 发布时间四档 / Unique domains / Known fixed-source / New-discovered）与 Top domains，新增 SOURCE QUALITY、Genre distribution 与 DISCOVERED CANDIDATES（title / domain / published_at / rerank_score / tags / url）
+- 错误处理与百度 probe 同构：missing key（打印 `Missing environment variable: ALIYUN_SEARCH_API_KEY`，退出码 2，无 traceback）、400 / 401 / 403 / 429（明确不重试）/ 5xx / timeout / connection error / 非 JSON / HTTP 200 但没有 `pageItems`（打印响应顶层 key）；单个 query 失败不影响其余 query。403 的解析按实测形状 `{requestId, errorMessage, errorCode}`（真机验证：无效 key 返回 403 + `Retrieval.InvalidAPIKey`）
+- Key 只来自环境变量 `ALIYUN_SEARCH_API_KEY`（`backend/.env.example` 已加注释占位），从不打印、不写日志、不写测试、不进 Git。未新增任何依赖，只用项目已有 `httpx`
+- 单测 `tests/test_aliyun_search_probe.py`（79 条）全部 mock HTTP：请求体形状 / numResults 字符串 / 不使用 AI 摘要 / 不带 excludeSites / 正常 200 / 多条与空结果 / 无 pageItems / 缺字段 / 无 URL 条目 / 标签解析与 isUgc / 六桶分类与点边界 / 七个观察名单域 / 去重 / known 判断 / 过去 24h 与 future / 400·401·403·429·500 / 非 JSON / timeout / connection error / 输出格式 / missing key / 不打印 Key
+- 修正一处测试隔离问题：两个 probe 的 `main()` 都会调用 `load_dotenv()`，因此当开发者本机 `.env` 里真的存在 Key 时，「未配置 Key」的用例会被喂进真 Key 而失败（实测发生）。两份测试各加一个 autouse fixture，把 `load_dotenv` 置为 no-op，使测试不再依赖运行机器
+
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
@@ -359,6 +374,9 @@ Phase 10.10 安全机制:
 - 诊断脚本不写数据库、不改 schema、不发 RSS、不用现有 LLMClient（/chat/completions 那条链路保持原样），输出 BASE_URL / MODEL / HTTP status / 搜索证据 / 模型文本 / 最终结论，从不打印 API Key
 
 Known Issues:
+- 阿里云 CleverSee 探测（Phase 10.15）**尚未用真实 Key 跑过**：脚本、单测、错误路径与「未配置 Key」路径都已验证（403 真实错误形状已用无效 Key 在真机确认），但本机没有任何 ALIYUN_SEARCH_API_KEY，10 条 query 的真实召回 / 时效 / 二手来源占比仍是未知数。补上 Key 后跑一次 `uv run python -m app.jobs.test_aliyun_search` 才能给出 PASS / PARTIAL / FAIL 与 Baidu vs Aliyun 对照结论
+- Source Quality 六桶是 probe 本地分类（域名硬编码清单 + 引擎 isUgc 标签），既不是产品的 `source_type`，也不写入 `app/config/sources.py`；域名清单会随实际召回继续补，且「Unconfigured 但其实是官方站点」会落进 Unknown，所以该分布只能用于横向比较，不能当业务规则
+- 两个 probe 的 Source Quality 口径不完全相同：百度 probe 只有 known/unknown 二分 + AI 相关性诊断，六桶分类目前只在阿里 probe 里实现；要做严格对照需要把六桶判定也补进百度 probe（本轮未做，避免改动已完成的脚本）
 - 百度 Web Search 探测（Phase 10.15）**尚未用真实 Key 跑过**：脚本、单测、错误路径与「未配置 Key」路径都已验证，但本机没有任何 BAIDU_SEARCH_API_KEY，10 条 query 的真实召回 / 时效 / 新来源比例还是未知数。补上 Key 后跑一次 `uv run python -m app.jobs.test_baidu_search` 才能给出 PASS / PARTIAL / FAIL 结论
 - 百度探测里的 DEFAULT_MAX_QUERY_CHARS=60 是**本地保护值**，不是百度官方文档确认过的 limit（文档页未能访问），因此已超出就跳过而不是发送；真实 limit 确认后可用 --max-query-chars 调整
 - 百度搜索结果的 canonical 只去掉已知 utm 参数：同一文章带其他追踪参数时仍会被算成两条，Duplicate URLs 只是下界

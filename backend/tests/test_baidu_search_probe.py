@@ -44,6 +44,19 @@ INSIDE = "2026-09-20 06:00:00"
 OUTSIDE = "2026-09-18 06:00:00"
 
 
+@pytest.fixture(autouse=True)
+def ignore_the_developers_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the probe's ``main()`` from reading the real ``backend/.env``.
+
+    ``main()`` calls ``load_dotenv()``, which fills in any variable the process
+    does not already have - so a developer who really does have a
+    ``BAIDU_SEARCH_API_KEY`` would make the "no key configured" tests pass a key
+    in and fail. Tests must not depend on the machine they run on, and every value
+    they need is set explicitly, so the loader is a no-op here.
+    """
+    monkeypatch.setattr(probe, "load_dotenv", lambda *args, **kwargs: None)
+
+
 def entry(**kwargs) -> dict:
     """One documented web result entry."""
     node = {
