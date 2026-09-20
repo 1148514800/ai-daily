@@ -77,6 +77,18 @@ Completed:
 - 同一事件多来源去重继续复用 event_dedup：official 渠道之间、official 与 media 之间同一事件只保留一条，代表条目按 official > research > media 选择（本阶段只加测试，未重写选择逻辑）（Phase 10.14）
 - 不重复请求：Anthropic 只抓一个 newsroom 列表再按 path 区分 channel，Google 的 5 个 Feed 各自是独立官方 Feed 而不是同一页面的重复抓取（Phase 10.14）
 
+- 新增百度 Web Search 探测脚本 `app/jobs/test_baidu_search.py`（`uv run python -m app.jobs.test_baidu_search`）：调用百度当前正式接口 `POST https://qianfan.baidubce.com/v2/ai_search/web_search`（`search_source=baidu_search_v2` + `resource_type_filter=[{type: web}]`，只请求网页，不请求 video / image / aladdin），用 10 条中英文 Query Pool 验证「百度能不能作为固定 SOURCES 之外的动态发现层」（Phase 10.15）
+- 探测脚本是纯诊断：不写数据库、不改 schema、不发 RSS、不动 Scheduler / Mobile / Sources / LLM client，也绝不把搜索结果当新闻 —— 流程只有「百度 Search -> 候选 URL -> 打印与统计」，接入 pipeline（RawArticle -> article_extractor -> LLM enrich -> event_dedup -> media_selection -> news_ranker）要等人工看过真实结果后再决定
+- 时间范围：请求百度时用 `search_filter.range.page_time` 限定「昨天 .. 今天」（按脚本运行时刻在 APP_TIMEZONE 下自动计算，不写死），并保留 `sort.priority=auto`；因为 page_time 以**日期**为单位，所以脚本明确不把这个范围说成精确 24 小时 —— 是否真的落在过去 24 小时是本地按响应自带时间戳判断的（`is_within_last_24h`，future timestamp 直接排除）
+- 发布时间解析（`parse_page_time`）：兼容 ISO 时间戳 / 纯日期 / `2026年09月19日` / epoch 秒与毫秒；纯日期只给 `has_time=False`，不臆造成 00:00，因此不会被算成「过去 24 小时」；解析不了的值（如「3小时前」）保留原文并计入 Unknown publish time，绝不靠猜
+- 去重复用 `app.pipelines.urls.canonicalize_url`（不新写第二套规则），统计输出 Raw results / Unique URLs / Duplicate URLs 与 Unique domains；因为 canonical 规则只去掉已知 utm 参数，Duplicate URLs 是下界而不是上限
+- 新来源发现统计：按 hostname 与 `app/config/sources.py` 的 SOURCES 比较，输出 Known fixed-source URLs 与 New/discovered URLs（子域与父域双向认为是 known，取保守方向），并打印 Top domains 与 DISCOVERED CANDIDATES 列表（最新优先）
+- AI 相关性只做诊断，不进业务规则：复用 `app/pipelines/ai_filter.is_ai_related`，在报告里单独打印「没有 AI 证据」的条数。该词表是英文词 + 中文**品牌名**（无 人工智能 / 具身智能 这类中文通用词），所以中文泛 AI 新闻会被计入，报告里已写明这只是 hint
+- 错误处理：401 / 403 / 429 / 400 / 5xx / timeout / connection error / 非 JSON / JSON 结构变化 / 单个 query 过长 全部有独立且可读的报错；单个 query 失败不影响其他 query，429 明确不自动重试；HTTP 200 但没有结果列表时会把响应的顶层 key 打印出来，避免「schema 变了」被误读成「今天没有新闻」
+- 退出码：0 至少一个 query 成功 / 1 无任何 query 成功（接口不可用）/ 2 未配置 BAIDU_SEARCH_API_KEY（打印 `Missing environment variable: BAIDU_SEARCH_API_KEY` 后正常退出，不打印 traceback）
+- API Key 只来自环境变量 `BAIDU_SEARCH_API_KEY`（`backend/.env.example` 已加注释占位），从不打印、不写日志、不写测试、不进 Git
+- 探测脚本单测 `tests/test_baidu_search_probe.py`（67 条）全部 mock HTTP，覆盖正常 200 / 多条结果 / 空结果 / 无结果列表 / 缺字段 / 无 URL 条目 / 400 / 401 / 403 / 429 / 500 / 非 JSON / timeout / connection error / URL 去重 / known 与 unknown domain / page_time 各格式 / 过去 24 小时边界 / API Key 缺失，pytest 绝不真实消耗百度额度
+
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
@@ -347,6 +359,10 @@ Phase 10.10 安全机制:
 - 诊断脚本不写数据库、不改 schema、不发 RSS、不用现有 LLMClient（/chat/completions 那条链路保持原样），输出 BASE_URL / MODEL / HTTP status / 搜索证据 / 模型文本 / 最终结论，从不打印 API Key
 
 Known Issues:
+- 百度 Web Search 探测（Phase 10.15）**尚未用真实 Key 跑过**：脚本、单测、错误路径与「未配置 Key」路径都已验证，但本机没有任何 BAIDU_SEARCH_API_KEY，10 条 query 的真实召回 / 时效 / 新来源比例还是未知数。补上 Key 后跑一次 `uv run python -m app.jobs.test_baidu_search` 才能给出 PASS / PARTIAL / FAIL 结论
+- 百度探测里的 DEFAULT_MAX_QUERY_CHARS=60 是**本地保护值**，不是百度官方文档确认过的 limit（文档页未能访问），因此已超出就跳过而不是发送；真实 limit 确认后可用 --max-query-chars 调整
+- 百度搜索结果的 canonical 只去掉已知 utm 参数：同一文章带其他追踪参数时仍会被算成两条，Duplicate URLs 只是下界
+- 百度探测的 AI 相关性统计复用 ai_filter 词表，其中文部分只有品牌名（豆包 / 混元 / 文心 / 智谱 / MiniMax），没有 人工智能 / 具身智能 等通用词，因此中文泛 AI 新闻会被误计为「无 AI 证据」，该数字只能当 hint
 - Phase 10.14 的 organization / channel 是来源配置的静态属性，没有写进数据库：debug 输出与 health 报告能看到公司覆盖，但已入库的历史新闻无法按 organization 反查（需要时从 source 名称映射）
 - Official Source Coverage 只在 refresh 进程中构建，不持久化：看不到"某个 channel 连续 N 天为 0"的趋势。判断"最近真没更新"还是"结构悄悄变了"目前仍靠人工对比 EMPTY 与 FAIL
 - 一个公司多个 channel 时，同一事件仍可能先被两个 channel 各自采到再靠 event_dedup 合并：合并依赖标题 / URL 规则，官方渠道之间标题差异较大时可能保留两条
