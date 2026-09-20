@@ -104,6 +104,19 @@ Completed:
 - 单测 `tests/test_aliyun_search_probe.py`（79 条）全部 mock HTTP：请求体形状 / numResults 字符串 / 不使用 AI 摘要 / 不带 excludeSites / 正常 200 / 多条与空结果 / 无 pageItems / 缺字段 / 无 URL 条目 / 标签解析与 isUgc / 六桶分类与点边界 / 七个观察名单域 / 去重 / known 判断 / 过去 24h 与 future / 400·401·403·429·500 / 非 JSON / timeout / connection error / 输出格式 / missing key / 不打印 Key
 - 修正一处测试隔离问题：两个 probe 的 `main()` 都会调用 `load_dotenv()`，因此当开发者本机 `.env` 里真的存在 Key 时，「未配置 Key」的用例会被喂进真 Key 而失败（实测发生）。两份测试各加一个 autouse fixture，把 `load_dotenv` 置为 no-op，使测试不再依赖运行机器
 
+- 新增 Tavily Search 探测脚本 `app/jobs/test_tavily_search.py`（`uv run python -m app.jobs.test_tavily_search`）：调用官方接口 `POST https://api.tavily.com/search`，鉴权用官方 OpenAPI 文档里的 `Authorization: Bearer <TAVILY_API_KEY>`，用同一套 10 条 Query Pool 与百度 / 阿里 probe 做三方同条件对照（Phase 10.15）
+- 请求形状以当前官方 schema 为准（**任务书里给的 `days` 已废弃**）：实际发送 `topic=news` + `time_range=day` + `search_depth=basic` + `max_results=10`；`days` 参数在当前 API reference（`docs.tavily.com/documentation/api-reference/endpoint/search.md`）里已经**一个字都搜不到**，而 `time_range` 是文档正式列出的相对时间窗口（`day` 即官方对「过去 24 小时」的命名），因此不叠加冲突的日期参数、也不写死日期
+- `advanced` 已刻意不用：本阶段只需要发现候选 URL，AI Daily 自己已有 article extractor，不为「搜索引擎替我们做正文处理」付双倍 credits；`include_answer` / `include_raw_content` / `include_images` 全部为 false（既有额外收费，也不属于发现信号）。只额外打开 `include_published_date`（`topic=news` 本已自动开启，显式写出以防默认值变化）与 `include_usage`（不额外计费，让唯一一次真实运行的消耗可核对）
+- 三方共用同一批规则，**不复制第三套**：Query Pool、`PublishTime` / `parse_page_time`、`is_within_last_24h`、`canonicalize_url`、`is_known_source_domain`、`print_top_domains` 从百度 probe import，六桶 Source Quality 与七个二手来源观察名单从阿里 probe import（桶顺序 `SOURCE_QUALITY_ORDER` 与 `watched_domain_of` 的归并规则因此完全一致）
+- Tavily 的 `published_date` 是 **RFC 2822**（`Sun, 20 Sep 2026 14:00:00 GMT`，也可能为 `null`），共享解析器不认这种写法：`normalize_published` 只做「线上编码 -> ISO 8601」的翻译，再交给共享的 `parse_page_time`，所以「哪些格式算数、纯日期不臆造成 00:00、解析不了就记 Unknown」仍是同一份实现；`null` 与无法识别的值原样透传，绝不编造时间
+- 未使用 `exclude_domains`：与另两个 probe 同理，第一轮必须看原始召回，否则对比的是黑名单而不是引擎
+- 输出与另两个 probe 对齐：SUMMARY（Provider / Topic / Days / Search depth / Queries / Successful / Failed / Raw / Unique / Duplicate / 发布时间四档 / Unique domains / Known fixed-source / New-discovered / Credits），再依次打印 Top domains、SOURCE QUALITY 六桶、二手来源观察名单，最后是 TOP 10 VALUABLE DISCOVERED RESULTS（title / domain / published_at / score / tags / url）
+- 「最有价值」是**确定性排序**，不含 LLM 判断：只从 New/discovered 里选，先「过去 24 小时内」、再「有时间的优先」、再「最新」、最后才用引擎自己的 `score` 打破平局（`score` 是引擎私有信号，不得越过共享规则）
+- 错误处理覆盖 missing key（打印 `Missing environment variable: TAVILY_API_KEY`，退出码 2，无 traceback、不发请求）、400（含无效 topic，实测 `detail.error`）、401 / 403、429（明确不重试）、432 / 433（套餐额度用尽）、422（FastAPI 校验形状 `detail: [{loc, msg}]`）、5xx、timeout、connection error、非 JSON、HTTP 200 但没有 `results`（打印响应顶层 key）、结果缺 URL、时间戳无效；单个 query 失败不影响其余 query
+- `--max-results` 超过文档上限 20 时**直接拒绝并退出**（不发请求），不为一个不可能被满足的请求付额度
+- Key 只来自环境变量 `TAVILY_API_KEY`（`backend/.env.example` 已加注释占位），从不打印、不写日志、不写测试、不进 Git。未新增任何依赖（不使用 Tavily SDK，只用项目已有 `httpx`：目的是验证 HTTP API 而不是验证 SDK）
+- 单测 `tests/test_tavily_search_probe.py`（105 条）全部 mock HTTP：请求体形状 / 不含 `days` / 不开启收费选项 / 不带 `exclude_domains` / 无写死日期 / 正常 200 / 多条与空结果 / 无 results / 缺字段 / 无 URL 条目 / 非对象条目 / 嵌套 results / usage credits / RFC 2822 归一化与纯日期不臆造 / 标签 / 六桶分类与点边界 / 七个观察名单域与子域归并 / 去重与 canonicalization / known 与 unknown / 过去 24h 精确边界与 future / 单 query 失败隔离与 429 不重试 / 400·401·403·422·429·432·5xx / 非 JSON / timeout / connection error / 输出格式与 Top 10 / missing key / 不打印 Key / `load_dotenv` 已被 autouse fixture 屏蔽
+- Tavily（Phase 10.15）已用真实 Key 完整跑过一次 10 条 query（消耗 10 credits）：10/10 成功、88 raw / 84 unique / 4 duplicate、发布时间全部可解析且 84/84 落在过去 24 小时、66 个 unique domain、Known fixed-source 2 / New-discovered 82；Source Quality 为 Official 2 / Professional media 7 / GitHub-arXiv 0 / Portal 12 / UGC 7 / Unknown 56，二手观察名单命中 11（sohu.com 6 / blog.csdn.net 3 / sina.com.cn 2）。**结论 PARTIAL**：时效性与接口稳定性明显优于 CleverSee，海外主流媒体召回明显优于百度，但官方一手来源仍只有 2 条、GitHub/arXiv 为 0，中文侧仍以门户 / UGC 为主，且 `facebook.com` / `instagram.com` 这类社交平台已进入召回面
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
@@ -374,6 +387,11 @@ Phase 10.10 安全机制:
 - 诊断脚本不写数据库、不改 schema、不发 RSS、不用现有 LLMClient（/chat/completions 那条链路保持原样），输出 BASE_URL / MODEL / HTTP status / 搜索证据 / 模型文本 / 最终结论，从不打印 API Key
 
 Known Issues:
+- Tavily 探测（Phase 10.15）已知偏差：任务书写的 `days` 参数在当前官方 API reference 里已不存在（docs.tavily.com/documentation/api-reference/endpoint/search.md 里搜不到），脚本改用文档正式列出的 `time_range=day`。实测这一次 `time_range=day` 表现为**滚动 24 小时**：运行时刻为 2026-09-20 22:59 +0800，88 条结果的 `published_at` 最小值是 2026-09-19 23:00 +0800（≈23h59m 前），且 84/84 全部落在本地 24 小时判断之内。但这只是**单次观测**，Tavily 未在文档里承诺 `day` 的边界语义，所以报告里仍以本地 `is_within_last_24h` 二次判断为准，不把服务端行为当保证
+- Tavily 探测的 Source Quality 里 Unknown 高达 66.7%，但其中多数并非低质量：六桶用的媒体清单只覆盖 AI / 科技垂媒（TechCrunch / The Verge / Wired / Ars Technica 等），`politico.com` / `businessinsider.com` / `reuters.com` / `nytimes.com` / `latimes.com` / `cbsnews.com` / `fortune.com` / `moneycontrol.com` / `rfi.fr` / `cnbeta.com.tw` 这类主流综合媒体与 `infoq.cn` / `36kr.com` / `m.36kr.com` / `ifanr.com` / `geekpark.net` / `aibase.com` / `oschina.net` / `pedaily.cn` 这类国内科技媒体全部落在 Unknown。所以 Unknown 只能用于「和百度 / 阿里横向比较」，不能单独当作「低质量占比」解读；要更精确需要先扩充媒体清单（本轮未做，避免与已完成的两个 probe 口径分叉）
+- Tavily 探测（Phase 10.15）实测 `humanoid robot AI latest` 只召回 5 条，且出现 `facebook.com` / `instagram.com` 社交平台与 `physicalaidirectory.com` 这类目录站，说明英文机器人方向的召回面明显窄于中文方向，且社交平台未被排除（本轮刻意不加 `exclude_domains`）
+- Tavily 的 `score` 不可跨查询比较：实测同一批结果里既有 0.88 也有 0.01，低分结果（如 `businessinsider.com` 那条 0.0104）仍可能是有价值的新闻。因此 Top 10 排序只把 `score` 当平局裁决，绝不用它做跨查询阈值
+- Tavily 返回的 `usage.credits` 只覆盖成功响应：失败 / 429 的 query 不计入报告里的 Credits 总数，所以该数字是本次成功调用的消耗，不是账户总消耗
 - 阿里云 CleverSee 探测（Phase 10.15）**尚未用真实 Key 跑过**：脚本、单测、错误路径与「未配置 Key」路径都已验证（403 真实错误形状已用无效 Key 在真机确认），但本机没有任何 ALIYUN_SEARCH_API_KEY，10 条 query 的真实召回 / 时效 / 二手来源占比仍是未知数。补上 Key 后跑一次 `uv run python -m app.jobs.test_aliyun_search` 才能给出 PASS / PARTIAL / FAIL 与 Baidu vs Aliyun 对照结论
 - Source Quality 六桶是 probe 本地分类（域名硬编码清单 + 引擎 isUgc 标签），既不是产品的 `source_type`，也不写入 `app/config/sources.py`；域名清单会随实际召回继续补，且「Unconfigured 但其实是官方站点」会落进 Unknown，所以该分布只能用于横向比较，不能当业务规则
 - 两个 probe 的 Source Quality 口径不完全相同：百度 probe 只有 known/unknown 二分 + AI 相关性诊断，六桶分类目前只在阿里 probe 里实现；要做严格对照需要把六桶判定也补进百度 probe（本轮未做，避免改动已完成的脚本）
