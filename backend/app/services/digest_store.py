@@ -35,6 +35,7 @@ from app.services.news_ranker import (
     apply_ranking,
 )
 from app.services.news_search import SearchResults, search_articles
+from app.services.web_discovery import DiscoveryStats, collect_web_discovery
 from app.services.llm import EnrichmentStats, enrich_articles
 from app.services.article_extractor import (
     ExtractionSettings,
@@ -121,6 +122,11 @@ class DigestStore:
         self.last_news_count: int = 0
         self.last_github_count: int = 0
         self.last_kept_previous: bool = False
+        # Web Discovery is an addition to the refresh, not part of it: it is
+        # reported separately and its failure never counts against the sources.
+        self.last_discovery_stats: DiscoveryStats | None = None
+        # Kept so a debug refresh can print exactly what was handed to the pipeline.
+        self.last_discovery_candidates: list = []
 
     def collect_news(
         self,
@@ -145,8 +151,32 @@ class DigestStore:
             current = current.replace(tzinfo=timezone.utc)
 
         reports = collect_all_sources(fetch_text=fetch_text)
+
+        # Web discovery runs beside the fixed sources and is appended to their
+        # reports, so the rest of this method - and the whole downstream
+        # pipeline - cannot tell the two apart. A discovered page is an ordinary
+        # RawArticle from here on. Discovery never raises: a provider outage is
+        # reported and the fixed sources carry the digest on their own.
+        discovery = collect_web_discovery(current)
+        self.last_discovery_stats = discovery.stats if discovery is not None else None
+        self.last_discovery_candidates = list(discovery.candidates) if discovery is not None else []
+        if discovery is not None:
+            reports.append(discovery.report)
+
         self.last_reports = reports
-        errors = [report.error for report in reports if report.error]
+
+        # A discovery outage is reported on its own line and kept out of the
+        # sources' aggregate error. The two are different failures: a fixed feed
+        # is part of the digest, while discovery is an addition that is allowed
+        # to be missing.
+        if discovery is not None and not discovery.report.success:
+            logger.warning("web discovery failed: %s", discovery.report.error)
+
+        errors = [
+            report.error
+            for report in reports
+            if report.error and not report.discovery
+        ]
         self.last_error = "; ".join(errors) if errors else None
         for report in reports:
             logger.info(

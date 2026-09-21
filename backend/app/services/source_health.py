@@ -90,6 +90,12 @@ class SourceOutcome:
     # reaching back into the config for every row.
     organization: str = ""
     channel: str = "news"
+    # True for the Web Discovery layer. It is a way of collecting rather than a
+    # published source, so it appears in the per-source table like anything else
+    # but must stay out of the official coverage: Tavily is not a company
+    # channel, and counting it as one would overstate how much of a vendor's own
+    # output AI Daily covers.
+    discovery: bool = False
 
     @property
     def status(self) -> str:
@@ -184,6 +190,7 @@ def build_report(reports) -> SourceHealthReport:
             # company and channel are properties of the source, not of one run.
             organization=source.organization if source is not None else "",
             channel=source.channel if source is not None else "",
+            discovery=bool(getattr(report, "discovery", False)),
         )
         health.outcomes.append(outcome)
         if not outcome.success:
@@ -241,6 +248,9 @@ def build_coverage(
             valid=outcome.valid,
         )
         for outcome in report.outcomes
+        # Web discovery is a way of collecting, not somebody's official channel:
+        # it is reported on its own and must not appear as a company surface.
+        if not outcome.discovery
     ]
     for organization, channel in unsupported:
         rows.append(

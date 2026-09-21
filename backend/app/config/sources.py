@@ -22,6 +22,8 @@ stable public read API for this use, and scraping it would need a browser.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable
+from urllib.parse import urlsplit
 
 # Priority numbers only order sources within the same source_type; official
 # sources always win over research, which always wins over media, whatever the
@@ -552,3 +554,71 @@ def source_by_id(source_id: str) -> NewsSource:
 
 def source_map() -> dict[str, NewsSource]:
     return {source.id: source for source in SOURCES}
+
+
+# --------------------------------------------------------------------------- #
+# hostnames
+# --------------------------------------------------------------------------- #
+#
+# Whether a web page belongs to a configured source is a property of the source
+# configuration, not of any one collector, so the rules live here and every
+# caller shares them: the Web Discovery layer needs them to decide which host it
+# may label ``official``, and the benchmark probes import the same functions
+# rather than keeping a second copy that could drift.
+
+
+def domain_of(url: str) -> str:
+    """The hostname of ``url``, lowercased and without a leading ``www.``."""
+    host = (urlsplit(str(url or "").strip()).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _matches_domain(left: str, right: str) -> bool:
+    """Whether two hostnames are the same site, on a dot boundary.
+
+    Bidirectional on purpose: ``blog.openai.com`` belongs to ``openai.com`` and
+    ``nvidia.com`` belongs to ``developer.nvidia.com``. This is the conservative
+    direction for "is this already covered", and it is what lets a discovered
+    page on a subdomain reuse its parent source's ``source_type``. The dot
+    boundary keeps ``myopenai.com`` and ``openai.com.evil.example`` out.
+    """
+    if not left or not right:
+        return False
+    return left == right or left.endswith(f".{right}") or right.endswith(f".{left}")
+
+
+def known_source_domains(sources: Iterable[NewsSource] = SOURCES) -> frozenset[str]:
+    """The hostnames the fixed sources are read from."""
+    return frozenset(domain for domain in (domain_of(source.url) for source in sources) if domain)
+
+
+def is_known_source_domain(domain: str, known: frozenset[str]) -> bool:
+    """Whether a hostname is already covered by a fixed source.
+
+    Matched in both directions on a dot boundary, so ``blog.openai.com`` counts
+    as covered because ``openai.com`` is configured, and ``nvidia.com`` counts as
+    covered because ``developer.nvidia.com`` is. That is intentionally the
+    *conservative* direction: the question is whether a page is outside the fixed
+    sources, and a subdomain quirk must not be what makes it look new.
+    """
+    if not domain:
+        return False
+    return any(_matches_domain(domain, candidate) for candidate in known)
+
+
+def source_for_domain(domain: str, sources: Iterable[NewsSource] = SOURCES) -> NewsSource | None:
+    """The configured source a hostname belongs to, or ``None``.
+
+    One company can publish several sources on one host (Anthropic has three on
+    ``anthropic.com``), so the choice is deterministic rather than arbitrary:
+    lowest ``priority`` first, then ``id``. Any of them carries the same
+    ``source_type``, which is the only thing the caller uses.
+    """
+    matches = [
+        source
+        for source in sources
+        if _matches_domain(domain, domain_of(source.url))
+    ]
+    if not matches:
+        return None
+    return min(matches, key=lambda source: (source.priority, source.id))

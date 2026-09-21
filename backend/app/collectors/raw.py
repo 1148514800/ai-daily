@@ -20,6 +20,11 @@ class CollectResult:
     skipped: int = 0
     news_items: list[NewsItem] = field(default_factory=list)
     error: str | None = None
+    # True for the Web Discovery layer, which is a way of *collecting* and not a
+    # source. The refresh report prints it like any other row, but the official
+    # source coverage must not count it as a company channel, so it is flagged
+    # here rather than re-derived from the source id at each call site.
+    discovery: bool = False
 
 
 @dataclass(frozen=True)

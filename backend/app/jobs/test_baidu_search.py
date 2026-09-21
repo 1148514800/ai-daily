@@ -50,6 +50,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.collectors.http import USER_AGENT
+from app.config.discovery import DISCOVERY_QUERIES
 from app.config.env import load_dotenv
 from app.config.sources import SOURCES
 from app.config.timezone import app_timezone
@@ -74,22 +75,13 @@ SORT_PRIORITY = "auto"
 # "yesterday through today" is the narrowest range that can contain a 24h window.
 DATE_FORMAT = "%Y-%m-%d"
 
-# One query is one request, so the pool stays small. It covers the product
-# angles AI Daily actually reports on (models, agents, coding agents, robots,
-# chips) in both Chinese and English, and names several Chinese vendors because
-# the fixed sources are strongest on English first-party blogs.
-QUERY_POOL: tuple[str, ...] = (
-    "AI 人工智能 最新发布",
-    "大模型 LLM 最新发布",
-    "AI Agent 最新发布",
-    "AI 编程 Agent 最新发布",
-    "人形机器人 具身智能 最新发布",
-    "AI 芯片 推理 最新发布",
-    "DeepSeek 豆包 智谱 MiniMax 最新",
-    "new AI model release",
-    "AI agent latest release",
-    "humanoid robot AI latest",
-)
+# The pool is imported from production rather than duplicated here, so the three
+# benchmark probes and the refresh all measure the same queries and their results
+# stay comparable. One query is one request, so the pool stays small. It covers
+# the product angles AI Daily actually reports on (models, agents, coding agents,
+# robots, chips) in both Chinese and English, and names several Chinese vendors
+# because the fixed sources are strongest on English first-party blogs.
+QUERY_POOL: tuple[str, ...] = DISCOVERY_QUERIES
 
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_TOP_K = 10

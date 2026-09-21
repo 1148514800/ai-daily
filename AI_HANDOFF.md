@@ -1,6 +1,6 @@
 # AI_HANDOFF.md
 
-Current Phase: Phase 10.13 - First-party AI sources + media curation
+Current Phase: Phase 10.15 - Tavily Web Discovery
 
 Completed:
 - 项目初始化
@@ -117,6 +117,24 @@ Completed:
 - Key 只来自环境变量 `TAVILY_API_KEY`（`backend/.env.example` 已加注释占位），从不打印、不写日志、不写测试、不进 Git。未新增任何依赖（不使用 Tavily SDK，只用项目已有 `httpx`：目的是验证 HTTP API 而不是验证 SDK）
 - 单测 `tests/test_tavily_search_probe.py`（105 条）全部 mock HTTP：请求体形状 / 不含 `days` / 不开启收费选项 / 不带 `exclude_domains` / 无写死日期 / 正常 200 / 多条与空结果 / 无 results / 缺字段 / 无 URL 条目 / 非对象条目 / 嵌套 results / usage credits / RFC 2822 归一化与纯日期不臆造 / 标签 / 六桶分类与点边界 / 七个观察名单域与子域归并 / 去重与 canonicalization / known 与 unknown / 过去 24h 精确边界与 future / 单 query 失败隔离与 429 不重试 / 400·401·403·422·429·432·5xx / 非 JSON / timeout / connection error / 输出格式与 Top 10 / missing key / 不打印 Key / `load_dotenv` 已被 autouse fixture 屏蔽
 - Tavily（Phase 10.15）已用真实 Key 完整跑过一次 10 条 query（消耗 10 credits）：10/10 成功、88 raw / 84 unique / 4 duplicate、发布时间全部可解析且 84/84 落在过去 24 小时、66 个 unique domain、Known fixed-source 2 / New-discovered 82；Source Quality 为 Official 2 / Professional media 7 / GitHub-arXiv 0 / Portal 12 / UGC 7 / Unknown 56，二手观察名单命中 11（sohu.com 6 / blog.csdn.net 3 / sina.com.cn 2）。**结论 PARTIAL**：时效性与接口稳定性明显优于 CleverSee，海外主流媒体召回明显优于百度，但官方一手来源仍只有 2 条、GitHub/arXiv 为 0，中文侧仍以门户 / UGC 为主，且 `facebook.com` / `instagram.com` 这类社交平台已进入召回面
+- 正式实现 Phase 10.15 Tavily Web Discovery：新增 `app/config/discovery.py`（配置 + 固定 10 条 Query Pool + RRF_K + NON_ARTICLE_DOMAINS）、`app/collectors/tavily.py`（只负责一次 HTTP 请求与响应解析，不认识业务）、`app/services/web_discovery.py`（漏斗 / RRF / 上限 / 转 RawArticle），`DigestStore.collect_news()` 在 `collect_all_sources()` 之后调用一次 `collect_web_discovery(current)`，把返回的 `CollectResult` 追加进 `reports`。**固定 Sources 仍是主干，Tavily 只补充动态热点发现**：它不生成日报、不生成摘要、不判断最终 importance，搜到的网页必须变成普通 `RawArticle` 才能进入既有 pipeline
+- Web Discovery 默认关闭：`WEB_DISCOVERY_ENABLED=false`（`.env.example` 同步），未配置时 `collect_web_discovery()` 返回 `None`，refresh 的报告列表、日志与漏斗与加这个模块之前完全一致；enabled=true 但没有 Key 时只打一条 warning 并跳过，固定 Sources 继续正常出日报
+- 请求参数沿用 benchmark 已验证的形状：`topic=news` / `time_range=day` / `search_depth=basic` / `max_results=10`，`include_answer` / `include_raw_content` / `include_images` 全为 false（AI Daily 自己有 article extractor，不为「搜索引擎替我们处理正文」付双倍 credits），只额外打开 `include_published_date`；**不使用已废弃的 `days`**。仍不使用 `exclude_domains`：第一轮要看原始召回，否则对比的是黑名单而不是引擎
+- 时间不信任 Provider：`time_range=day` 只是请求，每条结果都按本地 `now - 24h < published_at <= now` 二次判断（`is_within_last_24h`，左开右闭、future 一律不算）；**没有发布时间的候选直接丢弃**（Discovery 是额外补充，不必为了召回率放进时间未知的网页）。Discovery 的 24h 只是 Provider 质量门，**日报归属仍然只由 issue window 决定**
+- AI 相关性复用 `app/pipelines/ai_filter.py`（对 title + snippet 做确定性判断），不新建第二套关键词系统；不通过的候选丢弃并计入 `dropped_not_ai`
+- URL 去重复用 `app/pipelines/urls.canonicalize_url`：同一 canonical URL 被多个 Query 找到时**合并成一个候选**，保留 `matched_queries` 与 `query_ranks`。同一 Query 内重复列出同一 URL 只算一票（取更好的名次）——这是 RRF 的前提，否则 Provider 自己的一次排序失误会被当成两个 Query 的共识
+- 排序用 **RRF（`Σ 1 / (60 + query_rank)`，常数集中在 `RRF_K`）**，不用 Tavily 的 `score`：benchmark 已确认 `score` 不可跨 Query 比较。tie-break 固定为 `RRF desc -> published_at desc -> canonical_url asc -> url asc`，保证确定性；`provider_score` 只作为诊断字段保留，**不参与任何排序**
+- 两级上限：`WEB_DISCOVERY_MAX_PER_DOMAIN=2`（soft pre-selection，防止一个门户站占满候选，按 rank 顺序保留该域最好的 2 条，不是域名黑名单）与 `WEB_DISCOVERY_MAX_CANDIDATES=24`（最终进入正文抓取与 LLM 的条数上限）。漏斗为 `~90 raw -> 24h -> AI -> URL dedup -> RRF -> max 2/domain -> Top 24`
+- 非文章型社交页面有一个刻意极小的 hard reject 集（`NON_ARTICLE_DOMAINS = facebook.com / instagram.com`，按点边界匹配）：门户 / UGC / 博客**不在这里拒绝**，它们由 importance / media selection / ranking / event dedup 处理，Web Discovery 层不维护无限黑名单
+- 未知域名统一保守处理：domain 命中已有 SOURCES 就复用其 `source_id` / `source` / `source_type`（这样 Tavily 找到的 OpenAI 官网文章能和固定 RSS 的同一篇自然合并）；否则 `source_id=web:<domain>`、`source=domain`、`source_type=media`。**不新增 `source_type=discovery`**（第四种会污染 event dedup / media selection / ranking / API / Mobile badge），也绝不因为 Tavily 说它是官网就晋升为 official
+- Web Discovery 无任何特权：候选走的是同一条 `dedupe_articles -> article extraction -> LLM enrich -> event dedup -> media selection -> ranking`，未知域名一律 media，因此照样受 `MediaSelectionSettings`（importance < 60、媒体总量上限、单来源上限）约束
+- 日志默认只一行：`Web discovery: queries=10 ok=10 raw=88 recent=84 unique=80 selected=24`；`AI_DAILY_DEBUG_WEB_DISCOVERY=1` 时逐条打印 `KEEP rrf=... hits=... domain=...` 与 `DROP reason=outside_24h / not_ai / missing_time / social / domain_cap / candidate_cap`。API Key 与 Authorization 永不打印。`DiscoveryStats` 的每个阶段都计数，所以漏斗能解释 `~90 raw` 去了哪里
+- 失败隔离：timeout / connection error / 401 / 403 / 429（不重试）/ 5xx / schema 变化 / 所有 query 失败，一律 log warning + Discovery 返回空，**固定 Sources 继续正常生成日报**。discovery 的 report 带 `discovery=True`，因此既不会进 `store.last_error`，也被 `build_coverage()` 从 Official Source Coverage 里排除（Tavily 不是任何公司的官方渠道，算进去会虚报覆盖率）
+- refresh debug 新增 Web Discovery 漏斗区块（只在该层运行时打印）与候选明细，不新增数据库表 / 列：RRF / matched_queries / provider_score 目前只是 refresh 诊断，**不进 SQLite**
+- 新增只读 dry-run：`uv run python -m app.jobs.web_discovery_dry_run`（`app/jobs/web_discovery_dry_run.py`），只跑 discovery 一遍并打印配置 / 漏斗 / 失败 query / 最终候选（title / domain / published_at / rrf_score / hits / provider_score / queries / url）/ 域名分布 / known 与 new 的 source 映射；**不开数据库、不抓正文、不调 LLM、不写任何数据**。退出码 0 有候选 / 1 跑了但没有候选 / 2 未启用或缺 Key
+- Query Pool 提取到 production 的 `app/config/discovery.py`，三个 probe 反过来 import 它（`test_baidu_search.QUERY_POOL is DISCOVERY_QUERIES` 由测试断言），**production 不依赖任何 `test_*.py`**
+- 单测 `tests/test_web_discovery.py`（105 条）全部 mock HTTP（注入 `send` 或 `httpx.MockTransport`），覆盖 disabled / enabled 但缺 Key / 未知 provider / 200 / 空结果 / 单 query 失败不影响其余 / 全部失败 / 401·403·429·400·422·5xx / timeout / connection error / 非 JSON / 200 但 results 被改名（打印顶层 key）/ 无 URL 条目 / rolling 24h 左右边界与 future / 缺时间 / RFC 2822 / AI 接受与拒绝 / 同 URL 跨 query 合并 / utm canonicalization / 同 query 重复只算一票 / RRF（多 query 胜过单 query 第一、确定性、`provider_score` 不能改变顺序）/ domain cap 保留该域最好的 2 条且其他域不被挤掉 / candidate cap / known 域复用 source 与 unknown 域 `web:<domain>` + media / `dedupe_articles` 同 URL 只剩一条且 official 赢过 discovery media / 配置默认值与非法值回退 / 输出格式 / dry-run 行为与「不开数据库、不跑 pipeline」
+- Tavily Web Discovery 真实 dry-run（2026-09-21，读 only，消耗 10 credits）：10/10 query 成功、81 raw / 59 unique / 1 条被多个 query 命中、21 条非 AI、24 条入选、0 条缺时间、0 条落在 24h 之外，域名分布 24 个域名各 1 条（门户未形成垄断），最终 24 条全部是 New/discovered。dry-run 前后 `backend/data/ai_daily.db` SHA256 完全一致；另用无效 Key 验证 failure 路径：33/33 固定来源仍全部成功，`last_error` 为 None，日报照常生成 3 条（OpenAI / Google DeepMind / Hugging Face）
 Current Architecture:
 - Expo + React Native + TypeScript
 - FastAPI /api/v1
@@ -387,7 +405,14 @@ Phase 10.10 安全机制:
 - 诊断脚本不写数据库、不改 schema、不发 RSS、不用现有 LLMClient（/chat/completions 那条链路保持原样），输出 BASE_URL / MODEL / HTTP status / 搜索证据 / 模型文本 / 最终结论，从不打印 API Key
 
 Known Issues:
-- Tavily 探测（Phase 10.15）已知偏差：任务书写的 `days` 参数在当前官方 API reference 里已不存在（docs.tavily.com/documentation/api-reference/endpoint/search.md 里搜不到），脚本改用文档正式列出的 `time_range=day`。实测这一次 `time_range=day` 表现为**滚动 24 小时**：运行时刻为 2026-09-20 22:59 +0800，88 条结果的 `published_at` 最小值是 2026-09-19 23:00 +0800（≈23h59m 前），且 84/84 全部落在本地 24 小时判断之内。但这只是**单次观测**，Tavily 未在文档里承诺 `day` 的边界语义，所以报告里仍以本地 `is_within_last_24h` 二次判断为准，不把服务端行为当保证
+- Phase 10.15 benchmark 决策：**Baidu PARTIAL**（中文门户 / UGC 污染严重）、**Aliyun CNLiteBasic FAIL**（rolling 24h 有效率仅约 8%）、**Tavily 选中**（三方中最适合作为正式 Discovery Provider）。三个 probe 全部保留、未删除，也未改其判定结论
+- Web Discovery 只有 Tavily 一个正式 Provider，`WEB_DISCOVERY_PROVIDER` 写别的值会直接禁用该层（不是静默选一个）；要接第二个 Provider 需要新增 collector 并在 `KNOWN_PROVIDERS` 注册
+- Query Pool 固定为 10 条、每个 refresh 都跑同一批：这样「发现的来源可以变、问的问题不变」。代价是每日约 10 credits 固定消耗，且**固定 query 可能漏掉与这 10 个主题无关的突发事件**（例如监管 / 安全 / 硬件供应链方向）
+- `time_range=day` 是 Tavily 自己定义的相对窗口，文档没有承诺它等于滚动 24 小时：实测过一次表现为滚动 24h，但这只是单次观测，所以本地 `is_within_last_24h` 仍是唯一判据，Provider 的时间语义变化不会影响正确性（只会影响召回量）
+- Web Discovery 的候选全部按 rank 顺序取，没有做 topic / company 维度的多样性分散：只靠 per-domain cap（max 2）防止单一站点垄断。同一 topic 的 24 条候选仍可能一起进入正文抓取与 LLM
+- 未知域名一律标记 media，因此**真正的新公司官网也会被当媒体**：这是刻意的保守选择（误标 official 会污染 ranking 与覆盖率），代价是这类候选要过 `MediaSelectionSettings` 的 importance >= 60 与媒体总量上限才能进日报。长期值得追踪的站点应该补进 `sources.py`
+- dry-run 的「Top candidates」按 RRF 排序，而 RRF 偏爱被多个 query 命中的 URL：真正的热点会浮上来，但**单一 query 里排名很高的独家新闻可能排在 24 条之外**。实测这次 59 个 unique URL 里有 35 个因 candidate cap 未入选，所以 cap 是当前最紧的一道闸门；如果以后怀疑漏掉了重要独家新闻，应该先调 WEB_DISCOVERY_MAX_CANDIDATES 而不是改 RRF
+- Tavily `score` 字段已保留在 `DiscoveryCandidate.provider_score` 里但没有进任何排序，也没有出现在正式 API / 数据库里：它只是 debug 输出，用于人工判断 RRF 排序是否符合直觉- Tavily 探测（Phase 10.15）已知偏差：任务书写的 `days` 参数在当前官方 API reference 里已不存在（docs.tavily.com/documentation/api-reference/endpoint/search.md 里搜不到），脚本改用文档正式列出的 `time_range=day`。实测这一次 `time_range=day` 表现为**滚动 24 小时**：运行时刻为 2026-09-20 22:59 +0800，88 条结果的 `published_at` 最小值是 2026-09-19 23:00 +0800（≈23h59m 前），且 84/84 全部落在本地 24 小时判断之内。但这只是**单次观测**，Tavily 未在文档里承诺 `day` 的边界语义，所以报告里仍以本地 `is_within_last_24h` 二次判断为准，不把服务端行为当保证
 - Tavily 探测的 Source Quality 里 Unknown 高达 66.7%，但其中多数并非低质量：六桶用的媒体清单只覆盖 AI / 科技垂媒（TechCrunch / The Verge / Wired / Ars Technica 等），`politico.com` / `businessinsider.com` / `reuters.com` / `nytimes.com` / `latimes.com` / `cbsnews.com` / `fortune.com` / `moneycontrol.com` / `rfi.fr` / `cnbeta.com.tw` 这类主流综合媒体与 `infoq.cn` / `36kr.com` / `m.36kr.com` / `ifanr.com` / `geekpark.net` / `aibase.com` / `oschina.net` / `pedaily.cn` 这类国内科技媒体全部落在 Unknown。所以 Unknown 只能用于「和百度 / 阿里横向比较」，不能单独当作「低质量占比」解读；要更精确需要先扩充媒体清单（本轮未做，避免与已完成的两个 probe 口径分叉）
 - Tavily 探测（Phase 10.15）实测 `humanoid robot AI latest` 只召回 5 条，且出现 `facebook.com` / `instagram.com` 社交平台与 `physicalaidirectory.com` 这类目录站，说明英文机器人方向的召回面明显窄于中文方向，且社交平台未被排除（本轮刻意不加 `exclude_domains`）
 - Tavily 的 `score` 不可跨查询比较：实测同一批结果里既有 0.88 也有 0.01，低分结果（如 `businessinsider.com` 那条 0.0104）仍可能是有价值的新闻。因此 Top 10 排序只把 `score` 当平局裁决，绝不用它做跨查询阈值

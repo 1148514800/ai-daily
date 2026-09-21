@@ -21,6 +21,11 @@ from app.services.source_health import (
     format_official_coverage,
 )
 from app.config.sources import unsupported_channels
+from app.services.web_discovery import (
+    discovery_debug_enabled,
+    format_discovery_candidates,
+    format_discovery_stats,
+)
 
 DEBUG_ENV = "AI_DAILY_DEBUG_GITHUB"
 EXTRACTION_DEBUG_ENV = "AI_DAILY_DEBUG_EXTRACTION"
@@ -40,6 +45,11 @@ def _debug_enabled() -> bool:
 
 def _extraction_debug_enabled() -> bool:
     return os.getenv(EXTRACTION_DEBUG_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _discovery_debug_enabled() -> bool:
+    """Per-candidate KEEP/DROP logging for Web Discovery, opt-in like the others."""
+    return discovery_debug_enabled()
 
 
 def _media_debug_enabled() -> bool:
@@ -119,6 +129,17 @@ def main() -> None:
     for report in reports:
         if report.error:
             print(f"Error ({report.source_name}): {report.error}")
+
+    # The Web Discovery funnel, printed only when the layer ran. It sits beside the
+    # per-source table because it is a way of collecting rather than a source, and
+    # its candidates are ordinary articles from the next line onwards.
+    discovery_stats = store.last_discovery_stats
+    if discovery_stats is not None:
+        print()
+        print(format_discovery_stats(discovery_stats))
+        if _discovery_debug_enabled():
+            print()
+            print(format_discovery_candidates(store.last_discovery_candidates))
 
     # Which company is covered on which of its own official surfaces, and which
     # channels are quiet, broken or have no stable source at all.
